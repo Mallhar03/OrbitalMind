@@ -1,0 +1,37 @@
+# OrbitalMind — Python 3.12.3 compatible
+# Install with: pip install -r requirements.txt
+
+# Core data
+numpy==1.26.4
+pandas==2.2.1
+scipy==1.13.0
+
+# Deep learning
+torch==2.1.0
+torchvision==0.16.0
+
+# Sequence models
+pytorch-forecasting==1.1.1
+pytorch-lightning==2.1.0
+
+# Neural ODE
+torchdiffeq==0.2.3
+
+# Normalizing Flow
+normflows==1.7.2
+
+# Signal decomposition
+EMD-signal==1.6.3
+
+# Meta learner
+lightgbm==4.3.0
+
+# Visualisation
+matplotlib==3.8.4
+seaborn==0.13.2
+
+# Testing
+pytest==8.1.1
+
+# Code formatting
+black==24.3.0
