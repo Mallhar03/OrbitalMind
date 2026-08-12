@@ -155,3 +155,22 @@ Compute: local Linux machine + Google Colab T4 (GPU-heavy steps)
 - No hardcoded paths — use config or relative paths
 - Never print inside functions — use return values
 - Run black formatter before marking any iteration complete
+
+---
+
+## SUB-AGENT: THE CHECKER
+
+You (the maker) cannot approve your own work.
+After pytest passes for an iteration, you do NOT mark it complete.
+You stop and request a checker review.
+
+How the checker works:
+- Checker is a SEPARATE Claude Code session
+- Checker reads .claude/checker/CHECKER.md
+- Checker reviews your code against review_code.md and review_tests.md
+- Checker writes verdict to memory/checker_verdict.md
+- Only a VERDICT: PASS in that file means iteration is complete
+
+Your job ends when pytest passes.
+The checker's job begins there.
+Do not conflate the two.

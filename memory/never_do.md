@@ -31,3 +31,10 @@ Do not re-argue them. Do not find exceptions. Just follow them.
 - NEVER let the pipeline have an interactive input() call
 - NEVER let any module import from a module in a later iteration
   (preprocessing cannot import from models, etc.)
+
+## Checker rules
+- NEVER mark iteration complete without checker PASS verdict
+- NEVER skip the checker because "tests already passed"
+- NEVER have the maker review its own work
+- NEVER request re-review without fixing ALL failures listed in verdict
+- NEVER modify checker files — they are read-only for the maker
