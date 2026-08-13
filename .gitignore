@@ -8,3 +8,8 @@ models/saved/
 outputs/
 *.pt
 *.ckpt
+# Keep outputs structure but ignore content
+outputs/*.csv
+outputs/*.png
+outputs/*.txt
+!outputs/.gitkeep
