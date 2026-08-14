@@ -35,3 +35,8 @@ pytest==8.1.1
 
 # Code formatting
 black==24.3.0
+
+# RINEX / data download
+georinex==1.16.2
+hatanaka==2.8.1
+requests==2.34.2
