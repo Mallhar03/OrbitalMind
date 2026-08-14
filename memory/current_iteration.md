@@ -1,14 +1,14 @@
 # Current Iteration
 
-Number: 5
+Number: 6
 Status: IN PROGRESS
-Module: TFT Model
-Last updated: 2026-08-15 00:53
+Module: LightGBM Meta-Learner
+Last updated: 2026-08-15 00:58
 
 ## Previous iteration result
-Iteration 4: PASS
+Iteration 5: PASS
 
 Checker verdict: APPROVED
 
 ## Next action
-Build TFT Model
+Build LightGBM Meta-Learner
