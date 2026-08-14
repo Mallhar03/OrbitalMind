@@ -1,14 +1,14 @@
 # Current Iteration
 
-Number: 3
+Number: 4
 Status: IN PROGRESS
-Module: Feature Engineering
-Last updated: 2026-08-15 00:43
+Module: LSTM + TCN-LSTM + Neural ODE
+Last updated: 2026-08-15 00:47
 
 ## Previous iteration result
-Iteration 2: PASS
+Iteration 3: PASS
 
 Checker verdict: APPROVED
 
 ## Next action
-Build Feature Engineering
+Build LSTM + TCN-LSTM + Neural ODE
