@@ -152,3 +152,16 @@ help:
 .PHONY: setup verify-1 verify-2 verify-3 verify-4 verify-5 \
         verify-6 verify-7 verify-8 test-all request-review \
         format format-check clean clean-outputs help
+
+# ── RESUME ───────────────────────────────────────────────
+
+resume:
+	@python3 scripts/resume.py
+
+checkpoint:
+	@echo "Usage: make checkpoint ITER=1 FN=function_name STATUS=complete NOTE='description'"
+	@python3 scripts/write_checkpoint.py \
+		--iteration $(ITER) \
+		--function "$(FN)" \
+		--status $(STATUS) \
+		--note "$(NOTE)"

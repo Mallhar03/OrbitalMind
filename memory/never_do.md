@@ -38,3 +38,11 @@ Do not re-argue them. Do not find exceptions. Just follow them.
 - NEVER have the maker review its own work
 - NEVER request re-review without fixing ALL failures listed in verdict
 - NEVER modify checker files — they are read-only for the maker
+
+## Session continuity rules
+- NEVER start a session without running python scripts/resume.py first
+- NEVER assume you know where you left off — always read the resume output
+- NEVER rewrite a function already marked [x] in a checkpoint file
+- NEVER write two functions without a checkpoint between them
+- NEVER let a session end without committing at minimum a WIP commit
+- NEVER ignore low-context warning signs — checkpoint and stop cleanly

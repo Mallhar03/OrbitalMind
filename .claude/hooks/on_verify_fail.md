@@ -30,3 +30,9 @@ When pytest fails or RMSE/Shapiro-Wilk conditions are not met, do this exactly.
 - Check if a decision was already made about this
 - If no prior decision exists, try a fundamentally different approach
 - Log the new approach in memory/decisions.md before trying it
+
+## Step 0 — Before diagnosing failure
+Run: python scripts/resume.py
+Check if this failure was already seen in memory/what_failed.md
+If same failure appears twice — do NOT try same fix again.
+Read memory/decisions.md for prior decisions about this module.

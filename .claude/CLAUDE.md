@@ -174,3 +174,44 @@ How the checker works:
 Your job ends when pytest passes.
 The checker's job begins there.
 Do not conflate the two.
+
+---
+
+## GRACEFUL SESSION HANDLING
+
+### At the start of EVERY session — no exceptions
+Run this before touching any file:
+    python scripts/resume.py
+
+Read the RESUME INSTRUCTION it prints.
+Follow it exactly. Do not assume you know where you left off.
+
+### After writing every single function
+Run this immediately after the function works:
+    python scripts/write_checkpoint.py \
+      --iteration N \
+      --function "function_name" \
+      --status complete \
+      --note "what it does and what was verified"
+
+Do not write the next function before running this.
+If you stop mid-function, run it with --status in_progress.
+
+### If you are running low on context
+Signs you are near token limit:
+- Responses getting shorter
+- Starting to lose track of earlier decisions
+- Repeating questions you already answered
+
+When you notice this, before stopping:
+1. Write checkpoint for current function with --status in_progress
+2. Update memory/current_iteration.md with exact next action
+3. Run: git add . && git commit -m "WIP: Iteration N — [function name] in progress"
+4. Write one line to memory/what_is_done.md: "SESSION ENDED mid-[function]"
+5. Stop cleanly
+
+### When you open a new session after a stop
+1. Run python scripts/resume.py
+2. Read the full output
+3. Do NOT start fresh — continue from checkpoint
+4. Do NOT rewrite functions already marked [x] in checkpoint

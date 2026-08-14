@@ -29,3 +29,10 @@ Run this checklist at the start of every iteration before writing any code.
 - Check that the test file for this iteration exists in tests/
 - If it does not exist, create it BEFORE writing the implementation
 - Tests first. Always.
+
+## Step 0 — BEFORE ANYTHING ELSE (added for graceful handling)
+Run: python scripts/resume.py
+Read the full output.
+If it says a checkpoint exists — read it before touching any file.
+If it says tests already pass — go to request-review, do NOT rewrite.
+If it says files are missing — resume from last safe checkpoint function.
