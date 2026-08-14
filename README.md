@@ -33,7 +33,7 @@ pytest tests/ -v
 | 4 | LSTM + TCN-LSTM + Neural ODE | ✅ Complete |
 | 5 | TFT Model | ✅ Complete |
 | 6 | LightGBM Meta-Learner | ✅ Complete |
-| 7 | Normalizing Flow | ⬜ Not started |
+| 7 | Normalizing Flow | ✅ Complete |
 | 8 | Full Pipeline Integration | ⬜ Not started |
 
 ---
