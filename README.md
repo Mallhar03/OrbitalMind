@@ -34,7 +34,7 @@ pytest tests/ -v
 | 5 | TFT Model | ✅ Complete |
 | 6 | LightGBM Meta-Learner | ✅ Complete |
 | 7 | Normalizing Flow | ✅ Complete |
-| 8 | Full Pipeline Integration | ⬜ Not started |
+| 8 | Full Pipeline Integration | ✅ Complete |
 
 ---
 

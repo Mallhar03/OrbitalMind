@@ -5,6 +5,7 @@
 PYTHON = venv/bin/python3
 PYTEST = venv/bin/python3 -m pytest
 DATA   = data/synthetic/gnss_synthetic.csv
+export PATH := $(CURDIR)/venv/bin:$(PATH)
 
 # ── SETUP ───────────────────────────────────────────────
 
