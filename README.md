@@ -27,7 +27,7 @@ pytest tests/ -v
 
 | Iteration | Module | Status |
 |-----------|--------|--------|
-| 1 | Synthetic Data Generator | ⬜ Not started |
+| 1 | Synthetic Data Generator | ✅ Complete |
 | 2 | Preprocessing Pipeline | ⬜ Not started |
 | 3 | Feature Engineering | ⬜ Not started |
 | 4 | LSTM + TCN-LSTM + Neural ODE | ⬜ Not started |

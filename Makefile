@@ -2,8 +2,8 @@
 # Claude Code calls these targets. Never run manually mid-iteration.
 # Usage: make <target>
 
-PYTHON = python3
-PYTEST = python3 -m pytest
+PYTHON = venv/bin/python3
+PYTEST = venv/bin/python3 -m pytest
 DATA   = data/synthetic/gnss_synthetic.csv
 
 # ── SETUP ───────────────────────────────────────────────
