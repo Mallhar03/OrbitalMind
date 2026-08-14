@@ -32,7 +32,7 @@ pytest tests/ -v
 | 3 | Feature Engineering | ✅ Complete |
 | 4 | LSTM + TCN-LSTM + Neural ODE | ✅ Complete |
 | 5 | TFT Model | ✅ Complete |
-| 6 | LightGBM Meta-Learner | ⬜ Not started |
+| 6 | LightGBM Meta-Learner | ✅ Complete |
 | 7 | Normalizing Flow | ⬜ Not started |
 | 8 | Full Pipeline Integration | ⬜ Not started |
 

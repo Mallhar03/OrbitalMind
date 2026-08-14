@@ -1,14 +1,14 @@
 # Current Iteration
 
-Number: 6
+Number: 7
 Status: IN PROGRESS
-Module: LightGBM Meta-Learner
-Last updated: 2026-08-15 00:58
+Module: Normalizing Flow
+Last updated: 2026-08-15 01:02
 
 ## Previous iteration result
-Iteration 5: PASS
+Iteration 6: PASS
 
 Checker verdict: APPROVED
 
 ## Next action
-Build LightGBM Meta-Learner
+Build Normalizing Flow
