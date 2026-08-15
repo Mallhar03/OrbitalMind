@@ -31,10 +31,17 @@ def decompose_signal(series: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.nda
     n = len(series)
     zeros = np.zeros(n)
 
+    # Constant or near-zero signal: EMD returns empty array
+    if IMFs is None or (hasattr(IMFs, '__len__') and len(IMFs) == 0):
+        return series.astype(float).copy(), zeros.copy(), zeros.copy()
+
     if IMFs.ndim == 1:
         IMFs = IMFs.reshape(1, -1)
 
     n_imfs = IMFs.shape[0]
+
+    if n_imfs == 0:
+        return series.astype(float).copy(), zeros.copy(), zeros.copy()
 
     if n_imfs == 1:
         return IMFs[0].copy(), zeros.copy(), zeros.copy()
