@@ -6,6 +6,8 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from torchdiffeq import odeint
 
+from orbitalmind.paths import models_dir
+
 SEQ_LEN       = 96
 HIDDEN_SIZE   = 32
 BATCH_SIZE    = 8
@@ -13,7 +15,7 @@ EPOCHS        = 20
 LR            = 0.001
 GRAD_CLIP     = 1.0
 TRAIN_STEPS   = 8   # ODE prediction steps used during training (faster on CPU)
-SAVE_DIR      = "models/saved"
+SAVE_DIR = models_dir()
 
 
 def _make_sequences(data: np.ndarray, seq_len: int, target_len: int):
@@ -97,7 +99,7 @@ def train_neural_ode(
     torch.manual_seed(42)
     dev = torch.device(device)
 
-    train_data = np.asarray(data_array[:480], dtype=np.float32)
+    train_data = np.asarray(data_array, dtype=np.float32)
     X_np, y_np = _make_sequences(train_data, SEQ_LEN, TRAIN_STEPS)
     X_t = torch.tensor(X_np).unsqueeze(-1)   # (n, seq_len, 1)
     y_t = torch.tensor(y_np)                  # (n, TRAIN_STEPS)

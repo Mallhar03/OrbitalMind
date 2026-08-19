@@ -38,8 +38,9 @@ Training config (CPU-safe):
     learning_rate   = 0.001
     optimizer       = Adam
     loss            = MSELoss
-    train split     = days 1-5 (480 points)
-    val split       = days 6-7 (192 points)
+    train split     = whatever array the caller passes in.
+                      train_lstm() no longer slices its own data;
+                      orbitalmind.splits owns every window.
 
 Prediction method: rolling — each prediction feeds back as input for next step
 

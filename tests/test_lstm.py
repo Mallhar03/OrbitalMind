@@ -21,7 +21,9 @@ def trained_lstm():
     df = generate_synthetic_gnss_data(seed=42)
     preprocessed = preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
     data = preprocessed['trend'] + preprocessed['periodic']
-    model, metrics = train_lstm(data, 'GEO', 'ClockError_ns')
+    # train_lstm fits exactly what it is handed; the caller owns the window,
+    # so data[480:576] below stays genuinely out-of-sample.
+    model, metrics = train_lstm(data[:480], 'GEO', 'ClockError_ns')
     return model, metrics, data
 
 

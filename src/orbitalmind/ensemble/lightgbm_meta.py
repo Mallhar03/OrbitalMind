@@ -6,7 +6,9 @@ import os
 import numpy as np
 import lightgbm as lgb
 
-SAVE_DIR = "models/saved"
+from orbitalmind.paths import models_dir
+
+SAVE_DIR = models_dir()
 
 _LGB_PARAMS = {
     "objective":        "regression",

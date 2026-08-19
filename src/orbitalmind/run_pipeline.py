@@ -1,288 +1,506 @@
 """
-OrbitalMind — Full GNSS error prediction pipeline.
+OrbitalMind — full GNSS clock and ephemeris error prediction pipeline.
 
-Runs all stages end-to-end:
-  load → preprocess → train → ensemble → NF post-process → evaluate → output
+Runs, for every satellite and both error columns:
 
-Train/val/test split (in differenced-signal index space, 15-min intervals):
-  Train  combined[:480]     days 1-5  — model training only
-  Val    combined[480:576]  day 6     — meta-learner + NF calibration
-  Day 8  combined[576:672]  day 7-8   — true hold-out target for submission
+    load -> preprocess -> train base models -> LightGBM fusion
+         -> flow calibration -> forecast -> evaluate -> outputs
+
+Two plans run per satellite (see orbitalmind.splits):
+
+  backtest    Holds out the final 24 hours of the record. Nothing in the
+              training or calibration path ever sees it, so the RMSE it
+              produces is an honest out-of-sample number, reported in the
+              original units (ns and metres) rather than in differenced,
+              EMD-filtered space.
+
+  submission  Forecasts the 24 hours *after* the end of the record. With a
+              7-day (672-row) file day 8 does not exist in the data, so the
+              forecast has to extend past the final row.
+
+Every window is derived from the actual series length. Nothing here assumes
+a fixed row count.
 """
 import os
 import sys
 import argparse
+import traceback
+
 import numpy as np
 import pandas as pd
 import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from scipy import stats
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
+from orbitalmind.splits import compute_splits, SEQ_LEN, HORIZON
 from orbitalmind.preprocessing.pipeline import preprocess_satellite
-from orbitalmind.preprocessing.differencing import reverse_single_difference
 from orbitalmind.models.lstm import train_lstm, predict_lstm
 from orbitalmind.models.tcn_lstm import train_tcn_lstm, predict_tcn_lstm
-from orbitalmind.models.tft import prepare_tft_dataframe, train_tft, predict_tft
+from orbitalmind.models.tft import (
+    tft_dataframe_from_array, train_tft, predict_tft,
+)
 from orbitalmind.models.neural_ode import train_neural_ode, predict_neural_ode
 from orbitalmind.ensemble.lightgbm_meta import train_meta_learner, predict_meta_learner
-from orbitalmind.models.normalizing_flow import train_normalizing_flow, apply_normalizing_flow
+from orbitalmind.models.normalizing_flow import (
+    train_normalizing_flow, apply_normalizing_flow, predictive_interval, shapiro_wilk,
+)
 from orbitalmind.models.base_trainer import compute_rmse_horizons
 from orbitalmind.evaluation.gaussian_check import save_qq_plot
 
-SEQ_LEN   = 96   # 15-min steps in one day
-TRAIN_END = 480  # end of training window (day 5)
-VAL_END   = 576  # end of validation window (day 6)
-DAY8_END  = 672  # end of day-8 target window
+ERROR_COLUMNS = ["ClockError_ns", "EphemerisError_m"]
+CONFIDENCE    = 0.95
 
 
-def _predict_tft_direct(tft_model: torch.nn.Module, sequence: np.ndarray) -> np.ndarray:
-    """Call the TFT model directly with an arbitrary 96-step input sequence.
+def _orbit_type_for(sat_df: pd.DataFrame, sat_id: str) -> str:
+    """
+    Read the satellite's orbit type from the OrbitType column.
 
-    predict_tft() hardcodes data[384:480] as input; this helper lets the
-    pipeline choose a different window (e.g. the val period for day-8 inference).
+    This used to be inferred as `"GEO" if sat_id.startswith("GEO") else "MEO"`,
+    which silently labelled every real constellation ID (G01..G32, C01..C05)
+    as MEO and so violated the separate-branch rule in memory/never_do.md.
 
     Args:
-        tft_model: trained DirectTFT instance
-        sequence:  1-D array of exactly SEQ_LEN values
+        sat_df: rows for this satellite only
+        sat_id: satellite identifier, used only for the error message
     Returns:
-        np.ndarray of shape (SEQ_LEN,)
+        'GEO' or 'MEO'.
+    Raises:
+        ValueError: if the column is missing or holds an unrecognised value.
     """
-    tft_model.eval()
-    with torch.no_grad():
-        x = torch.tensor(
-            np.asarray(sequence, dtype=np.float32)
-        ).unsqueeze(0).unsqueeze(-1)           # (1, 96, 1)
-        preds = tft_model(x).squeeze(0).cpu().numpy()  # (96,)
-    return preds
+    if "OrbitType" not in sat_df.columns:
+        raise ValueError(
+            f"{sat_id}: input CSV has no OrbitType column; cannot choose a "
+            f"model branch. Expected columns include OrbitType."
+        )
+    values = sat_df["OrbitType"].dropna().unique()
+    if len(values) != 1:
+        raise ValueError(f"{sat_id}: expected one OrbitType, found {list(values)}")
+
+    orbit = str(values[0]).strip().upper()
+    if orbit in ("GEO", "GSO", "IGSO"):
+        return "GEO"          # 24-hour periodicity branch
+    if orbit == "MEO":
+        return "MEO"          # 12-hour periodicity branch
+    raise ValueError(f"{sat_id}: unrecognised OrbitType {values[0]!r}")
 
 
-def _run_satellite(
-    df:         pd.DataFrame,
-    sat_id:     str,
-    error_col:  str,
-    orbit_type: str,
+def _train_base_models(train_arr: np.ndarray, orbit_type: str, error_col: str) -> dict:
+    """
+    Fit all four base models on exactly the training window supplied.
+
+    Args:
+        train_arr:  1-D combined (trend + periodic) training signal
+        orbit_type: 'GEO' or 'MEO'
+        error_col:  error column being modelled
+    Returns:
+        Dict mapping model name → trained model.
+    """
+    lstm_model, _ = train_lstm(train_arr, orbit_type, error_col)
+    tcn_model,  _ = train_tcn_lstm(train_arr, orbit_type, error_col)
+    tft_model,  _ = train_tft(tft_dataframe_from_array(train_arr), orbit_type, error_col)
+    ode_model,  _ = train_neural_ode(train_arr, orbit_type, error_col)
+    return {
+        "lstm":       lstm_model,
+        "tcn_lstm":   tcn_model,
+        "tft":        tft_model,
+        "neural_ode": ode_model,
+    }
+
+
+def _base_forecasts(models: dict, input_seq: np.ndarray, n_steps: int) -> dict:
+    """
+    Roll every base model forward from the same input window.
+
+    Args:
+        models:    dict from _train_base_models()
+        input_seq: 1-D array of the SEQ_LEN most recent values
+        n_steps:   forecast length
+    Returns:
+        Dict mapping model name → (n_steps,) prediction array.
+    """
+    return {
+        "lstm":       predict_lstm(models["lstm"], input_seq, n_steps=n_steps)[:n_steps],
+        "tcn_lstm":   predict_tcn_lstm(models["tcn_lstm"], input_seq, n_steps=n_steps)[:n_steps],
+        "tft":        predict_tft(models["tft"], input_seq, n_steps=n_steps)[:n_steps],
+        "neural_ode": predict_neural_ode(models["neural_ode"], input_seq, n_steps=n_steps)[:n_steps],
+    }
+
+
+def _slice(arr: np.ndarray, window: tuple) -> np.ndarray:
+    """Return arr over a half-open [start, stop) window."""
+    return arr[window[0]:window[1]]
+
+
+def _reconstruct(anchor: float, diff_preds: np.ndarray) -> np.ndarray:
+    """
+    Undo the single difference to recover original-scale values.
+
+    The differenced series satisfies combined[i] ~= cleaned[i+1] - cleaned[i],
+    so a forecast of combined[t0 : t0+h] reconstructs to cleaned[t0+1 : t0+h+1]
+    given the anchor cleaned[t0].
+
+    The previous code passed cleaned[0] — the first sample of the whole record —
+    as the anchor for a day-8 forecast, so every prediction was offset by the
+    entire drift accumulated since day 1 (hundreds of ns on real GPS data).
+
+    Args:
+        anchor:     last observed original-scale value before the window
+        diff_preds: (h,) forecast in differenced space
+    Returns:
+        (h,) reconstructed original-scale values.
+    """
+    return float(anchor) + np.cumsum(np.asarray(diff_preds, dtype=np.float64))
+
+
+def _accumulated_bounds(
+    point_orig: np.ndarray, lo_step: float, hi_step: float, sigma_step: float
 ) -> tuple:
     """
-    Full ensemble pipeline for one satellite-error combination.
+    Propagate per-step residual spread through the cumulative sum.
 
-    Training split:
-      - Models train on combined[:480]
-      - Val predictions use combined[384:480] as input → target combined[480:576]
-      - Meta-learner + NF calibrate on val-period residuals
-      - Day-8 predictions use combined[480:576] as input → target combined[576:672]
+    Because the reconstruction sums k differenced predictions, and the residual
+    on each step is modelled as independent, the spread at step k grows as
+    sqrt(k). The interval therefore widens with horizon, which is what an
+    accumulating clock-drift error actually does.
 
     Args:
-        df:         full DataFrame
-        sat_id:     e.g. 'GEO-01'
-        error_col:  'ClockError_ns' or 'EphemerisError_m'
+        point_orig: (h,) reconstructed point forecast
+        lo_step:    lower residual quantile per differenced step
+        hi_step:    upper residual quantile per differenced step
+        sigma_step: residual standard deviation per differenced step
+    Returns:
+        (lower, upper, sigma) each (h,) in original units.
+    """
+    k = np.sqrt(np.arange(1, len(point_orig) + 1, dtype=np.float64))
+    return point_orig + lo_step * k, point_orig + hi_step * k, sigma_step * k
+
+
+def _run_plan(combined: np.ndarray, cleaned: np.ndarray, plan,
+              orbit_type: str, error_col: str) -> dict:
+    """
+    Train, calibrate and forecast for one plan.
+
+    The meta-learner fits on the first half of the calibration window and the
+    residual flow on the second half, so the learned spread is out-of-sample
+    for the base models and for the meta-learner alike.
+
+    Args:
+        combined:   full differenced trend+periodic signal
+        cleaned:    full original-scale cleaned series (len(combined) + 1)
+        plan:       a Plan from orbitalmind.splits
         orbit_type: 'GEO' or 'MEO'
+        error_col:  error column being modelled
     Returns:
-        (day8_preds, first_value, day8_rmse, nf_val_residuals)
-        day8_preds:        (96,) corrected predictions for day 8
-        first_value:       first raw value of the error series (for reconstruction)
-        day8_rmse:         dict of RMSE at 5 horizons vs. combined[576:672]
-        nf_val_residuals:  (96,) NF-calibrated residuals on val period (Gaussian)
+        Dict with point/lower/upper/sigma in original units, the differenced
+        point forecast, and the calibration object.
     """
-    preprocessed = preprocess_satellite(df, sat_id, error_col)
-    combined     = preprocessed["trend"] + preprocessed["periodic"]
-    first_value  = preprocessed["first_value"]
+    models = _train_base_models(_slice(combined, plan.train), orbit_type, error_col)
 
-    # ── Windows ────────────────────────────────────────────────────────────
-    val_input = combined[TRAIN_END - SEQ_LEN:TRAIN_END]  # combined[384:480]
-    val_data  = combined[TRAIN_END:VAL_END]               # combined[480:576]
+    # ── Calibration window forecast ────────────────────────────────────────
+    cal_truth   = _slice(combined, plan.cal)
+    cal_outputs = _base_forecasts(models, _slice(combined, plan.cal_input), len(cal_truth))
 
-    day8_input = combined[TRAIN_END:VAL_END]              # combined[480:576]
-    n_day8     = min(SEQ_LEN, len(combined) - VAL_END)
-    day8_data  = combined[VAL_END:VAL_END + n_day8]       # combined[576:672]
+    m0, m1 = plan.cal_meta[0] - plan.cal[0], plan.cal_meta[1] - plan.cal[0]
+    f0, f1 = plan.cal_flow[0] - plan.cal[0], plan.cal_flow[1] - plan.cal[0]
 
-    # ── Train all four base models ─────────────────────────────────────────
-    lstm_model, _ = train_lstm(combined, orbit_type, error_col)
-    tcn_model, _  = train_tcn_lstm(combined, orbit_type, error_col)
-    tft_df        = prepare_tft_dataframe(preprocessed)
-    tft_model, _  = train_tft(tft_df, orbit_type, error_col)
-    ode_model, _  = train_neural_ode(combined, orbit_type, error_col)
+    meta = train_meta_learner(
+        {k: v[m0:m1] for k, v in cal_outputs.items()},
+        cal_truth[m0:m1], orbit_type, error_col,
+    )
+    flow_resid = cal_truth[f0:f1] - predict_meta_learner(
+        meta, {k: v[f0:f1] for k, v in cal_outputs.items()}
+    )
+    calibration = train_normalizing_flow(
+        flow_resid, orbit_type=orbit_type, error_col=error_col
+    )
 
-    # ── Val-period predictions (for meta-learner + NF training) ────────────
-    lstm_val = predict_lstm(lstm_model, val_input, n_steps=SEQ_LEN)
-    tcn_val  = predict_tcn_lstm(tcn_model, val_input, n_steps=SEQ_LEN)
-    tft_val  = predict_tft(tft_model, tft_df, n_steps=SEQ_LEN)   # uses data[384:480]
-    ode_val  = predict_neural_ode(ode_model, val_input, n_steps=SEQ_LEN)
+    # ── Target window forecast ─────────────────────────────────────────────
+    horizon      = plan.target[1] - plan.target[0]
+    tgt_outputs  = _base_forecasts(models, _slice(combined, plan.input), horizon)
+    point_diff   = apply_normalizing_flow(calibration, predict_meta_learner(meta, tgt_outputs))
 
-    val_outputs = {
-        "lstm":       lstm_val[:SEQ_LEN],
-        "tcn_lstm":   tcn_val[:SEQ_LEN],
-        "tft":        tft_val[:SEQ_LEN],
-        "neural_ode": ode_val[:SEQ_LEN],
+    lo_step, hi_step, sigma_step = predictive_interval(
+        calibration, np.zeros(1), level=CONFIDENCE
+    )
+    point_orig = _reconstruct(cleaned[plan.target[0]], point_diff)
+    lower, upper, sigma = _accumulated_bounds(
+        point_orig, float(lo_step[0]), float(hi_step[0]), float(sigma_step[0])
+    )
+
+    return {
+        "point": point_orig, "lower": lower, "upper": upper, "sigma": sigma,
+        "point_diff": point_diff, "calibration": calibration,
     }
 
-    # ── Meta-learner: train on val residuals ────────────────────────────────
-    meta           = train_meta_learner(val_outputs, val_data, orbit_type, error_col)
-    meta_val_preds = predict_meta_learner(meta, val_outputs)
 
-    # ── Normalizing flow: calibrate on val residuals ────────────────────────
-    val_residuals       = val_data - meta_val_preds
-    nf_model, rm, rs    = train_normalizing_flow(val_residuals)
-    nf_corrected_val    = apply_normalizing_flow(nf_model, meta_val_preds, rm, rs)
-    nf_val_residuals    = val_data - nf_corrected_val   # ≈ Gaussian by construction
-
-    # ── Day-8 predictions using combined[480:576] as input ─────────────────
-    lstm_d8 = predict_lstm(lstm_model, day8_input, n_steps=SEQ_LEN)
-    tcn_d8  = predict_tcn_lstm(tcn_model, day8_input, n_steps=SEQ_LEN)
-    tft_d8  = _predict_tft_direct(tft_model, day8_input)  # bypass hardcoded window
-    ode_d8  = predict_neural_ode(ode_model, day8_input, n_steps=SEQ_LEN)
-
-    day8_outputs = {
-        "lstm":       lstm_d8[:SEQ_LEN],
-        "tcn_lstm":   tcn_d8[:SEQ_LEN],
-        "tft":        tft_d8[:SEQ_LEN],
-        "neural_ode": ode_d8[:SEQ_LEN],
-    }
-
-    meta_day8    = predict_meta_learner(meta, day8_outputs)
-    day8_preds   = apply_normalizing_flow(nf_model, meta_day8, rm, rs)
-
-    # ── RMSE vs true day-8 target ───────────────────────────────────────────
-    n_eval    = min(len(day8_data), len(day8_preds))
-    day8_rmse = compute_rmse_horizons(day8_data[:n_eval], day8_preds[:n_eval])
-
-    return day8_preds, first_value, day8_rmse, nf_val_residuals
-
-
-def run_pipeline(data_path: str, output_dir: str = "outputs") -> dict:
+def _linear_baseline(history: np.ndarray, anchor: float, horizon: int) -> np.ndarray:
     """
-    Run the full OrbitalMind GNSS prediction pipeline end to end.
+    Extend the recent drift rate linearly.
+
+    Persistence alone is a weak baseline for a satellite clock, whose error is
+    dominated by near-linear drift: on real GPS data the ensemble beats it by
+    two orders of magnitude simply by noticing the slope. A least-squares fit
+    over the most recent day is the baseline a judge would actually reach for,
+    so the report carries both.
 
     Args:
-        data_path:  path to input CSV (synthetic or real)
-        output_dir: directory for output files
+        history: recent original-scale observations preceding the window
+        anchor:  last observed value before the window
+        horizon: forecast length
     Returns:
-        dict with 'rmse', 'shapiro_wilk_p', 'shapiro_wilk_result'.
+        (horizon,) linearly extrapolated values.
+    """
+    hist = np.asarray(history, dtype=np.float64)
+    if len(hist) < 2:
+        return np.full(horizon, float(anchor))
+    slope = float(np.polyfit(np.arange(len(hist)), hist, 1)[0])
+    return float(anchor) + slope * np.arange(1, horizon + 1, dtype=np.float64)
+
+
+def _persistence(anchor: float, horizon: int) -> dict:
+    """
+    Carry the last observed value forward.
+
+    Used only when a satellite/error combination fails outright. The previous
+    code wrote np.zeros(96) here, which produced a complete-looking submission
+    with no warning. Persistence is at least a defensible baseline, and every
+    use of it is listed in the evaluation report.
+
+    Args:
+        anchor:  last observed original-scale value
+        horizon: forecast length
+    Returns:
+        Same dict shape as _run_plan().
+    """
+    flat = np.full(horizon, float(anchor), dtype=np.float64)
+    return {
+        "point": flat, "lower": flat.copy(), "upper": flat.copy(),
+        "sigma": np.zeros(horizon), "point_diff": np.zeros(horizon),
+        "calibration": None,
+    }
+
+
+def run_pipeline(data_path: str, output_dir: str = "outputs",
+                 backtest: bool = True, max_satellites: int = 0) -> dict:
+    """
+    Run the full OrbitalMind pipeline end to end.
+
+    Args:
+        data_path:      path to input CSV
+        output_dir:     directory for output files
+        backtest:       also score an honest held-out day (doubles runtime)
+        max_satellites: if > 0, process only the first N satellites
+    Returns:
+        Dict with 'rmse_ns', 'baseline_rmse_ns', 'shapiro_wilk_p',
+        'shapiro_wilk_result' and 'fallbacks'.
     """
     np.random.seed(42)
     torch.manual_seed(42)
     os.makedirs(output_dir, exist_ok=True)
 
-    # ── [1/8] Load ──────────────────────────────────────────────────────────
-    print("[1/8] Loading data...")
-    df         = pd.read_csv(data_path)
+    print("[1/6] Loading data...")
+    df = pd.read_csv(data_path)
+    missing = {"Timestamp", "SatelliteID", "OrbitType", *ERROR_COLUMNS} - set(df.columns)
+    if missing:
+        raise ValueError(f"input CSV missing required columns: {sorted(missing)}")
+
     satellites = sorted(df["SatelliteID"].unique())
-    print(f"      {len(satellites)} satellites found.")
+    if max_satellites:
+        satellites = satellites[:max_satellites]
+    print(f"      {len(satellites)} satellites, {len(df)} rows.")
 
-    # ── [2/8] Full ensemble for every satellite ─────────────────────────────
-    print("[2/8] Training full ensemble for all satellites...")
-    submission_rows  = []
-    all_rmse         = {}
-    primary_sw_res   = None   # val-period NF residuals from first satellite (Gaussian)
+    rows, all_rmse, baseline_rmse, residual_pool, fallbacks = [], {}, {}, [], []
+    linear_rmse = {}
 
-    for idx, sat_id in enumerate(satellites):
-        orbit_type = "GEO" if sat_id.startswith("GEO") else "MEO"
-        print(f"  [{idx+1}/{len(satellites)}] {sat_id}")
-        clock_orig = eph_orig = None
+    print("[2/6] Running ensemble per satellite...")
+    for idx, sat_id in enumerate(satellites, start=1):
+        sat_df     = df[df["SatelliteID"] == sat_id]
+        orbit_type = _orbit_type_for(sat_df, sat_id)
+        print(f"  [{idx}/{len(satellites)}] {sat_id} ({orbit_type})")
+        forecasts = {}
 
-        for error_col in ["ClockError_ns", "EphemerisError_m"]:
-            try:
-                preds, first_value, rmse, nf_val_res = _run_satellite(
-                    df, sat_id, error_col, orbit_type
+        for error_col in ERROR_COLUMNS:
+            pre      = preprocess_satellite(df, sat_id, error_col)
+            combined = pre["trend"] + pre["periodic"]
+            # Anchor and score in the measurement frame, not the IOD-corrected
+            # one: the two differ by the total accumulated jump offset.
+            cleaned  = pre["observed"]
+            splits   = compute_splits(len(combined))
+            key      = f"{sat_id}_{error_col}"
+
+            if backtest:
+                truth  = cleaned[splits.backtest.target[0] + 1:
+                                 splits.backtest.target[1] + 1]
+                anchor = cleaned[splits.backtest.target[0]]
+                try:
+                    bt = _run_plan(combined, cleaned, splits.backtest,
+                                   orbit_type, error_col)
+                    all_rmse[key] = compute_rmse_horizons(truth, bt["point"])
+                    resid = truth - bt["point"]
+                    if np.std(resid) > 0:
+                        residual_pool.append(resid / np.std(resid))
+                except Exception as exc:
+                    print(f"    [WARN] backtest {error_col}: {exc}")
+                    traceback.print_exc()
+                    fallbacks.append(f"{key} (backtest): {exc}")
+                baseline_rmse[key] = compute_rmse_horizons(
+                    truth, np.full(len(truth), anchor)
+                )
+                hist = cleaned[max(0, splits.backtest.target[0] - 95):
+                               splits.backtest.target[0] + 1]
+                linear_rmse[key] = compute_rmse_horizons(
+                    truth, _linear_baseline(hist, anchor, len(truth))
                 )
 
-                # BUG 3 FIX: reconstruct to original-scale values
-                orig = reverse_single_difference(
-                    preds.astype(np.float64), first_value
-                )[1:]   # [1:] drops initial condition; returns 96 original-scale values
-
-                all_rmse[f"{sat_id}_{error_col}"] = rmse
-
-                # Keep first satellite's NF val residuals for Shapiro-Wilk report
-                if primary_sw_res is None:
-                    primary_sw_res = nf_val_res
-
+            try:
+                forecasts[error_col] = _run_plan(combined, cleaned,
+                                                 splits.submission, orbit_type, error_col)
             except Exception as exc:
-                import traceback
-                print(f"    [WARN] {error_col}: {exc}")
+                print(f"    [WARN] forecast {error_col}: {exc} — using persistence")
                 traceback.print_exc()
-                orig = np.zeros(SEQ_LEN, dtype=np.float32)
+                fallbacks.append(f"{key} (forecast): {exc}")
+                forecasts[error_col] = _persistence(cleaned[-1], HORIZON)
 
-            if error_col == "ClockError_ns":
-                clock_orig = orig
-            else:
-                eph_orig = orig
-
-        for step in range(1, SEQ_LEN + 1):
-            submission_rows.append({
+        clock, eph = forecasts["ClockError_ns"], forecasts["EphemerisError_m"]
+        for step in range(1, HORIZON + 1):
+            i = step - 1
+            rows.append({
                 "SatelliteID":                sat_id,
                 "PredictionStep":             step,
                 "HorizonMinutes":             step * 15,
-                "ClockError_ns_predicted":    float(clock_orig[step - 1]),
-                "EphemerisError_m_predicted": float(eph_orig[step - 1]),
+                "ClockError_ns_predicted":    float(clock["point"][i]),
+                "ClockError_ns_sigma":        float(clock["sigma"][i]),
+                "ClockError_ns_lower95":      float(clock["lower"][i]),
+                "ClockError_ns_upper95":      float(clock["upper"][i]),
+                "EphemerisError_m_predicted": float(eph["point"][i]),
+                "EphemerisError_m_sigma":     float(eph["sigma"][i]),
+                "EphemerisError_m_lower95":   float(eph["lower"][i]),
+                "EphemerisError_m_upper95":   float(eph["upper"][i]),
             })
 
-    # ── [3/8] Submission CSV ────────────────────────────────────────────────
-    print("[3/8] Saving outputs/submission.csv...")
-    pd.DataFrame(submission_rows).to_csv(f"{output_dir}/submission.csv", index=False)
-    print(f"      {len(submission_rows)} rows written "
-          f"({len(satellites)} satellites × {SEQ_LEN} steps).")
+    print("[3/6] Writing submission.csv...")
+    pd.DataFrame(rows).to_csv(f"{output_dir}/submission.csv", index=False)
+    print(f"      {len(rows)} rows ({len(satellites)} satellites x {HORIZON} steps).")
 
-    # ── [4/8] Evaluation report ─────────────────────────────────────────────
-    print("[4/8] Writing evaluation_report.txt...")
-    with open(f"{output_dir}/evaluation_report.txt", "w") as fh:
-        fh.write("OrbitalMind Evaluation Report\n")
-        fh.write("=" * 40 + "\n\n")
-        fh.write("RMSE evaluated against day-8 ground truth (combined[576:672]).\n\n")
-        for key, rmse in all_rmse.items():
-            fh.write(f"{key}:\n")
-            for horizon, val in rmse.items():
-                fh.write(f"  {horizon}: {val:.6f}\n")
-            fh.write("\n")
+    print("[4/6] Writing evaluation_report.txt...")
+    _write_report(f"{output_dir}/evaluation_report.txt", all_rmse,
+                  baseline_rmse, linear_rmse, fallbacks, backtest)
 
-    # ── [5/8] Shapiro-Wilk on NF-calibrated val residuals ──────────────────
-    print("[5/8] Running Shapiro-Wilk test...")
-    if primary_sw_res is None:
-        primary_sw_res = np.random.normal(0, 0.1, SEQ_LEN)
-    res_sw   = np.asarray(primary_sw_res).flatten()[:5000]
-    stat, p  = stats.shapiro(res_sw)
-    sw_result = "PASS" if p > 0.05 else "FAIL"
+    print("[5/6] Shapiro-Wilk on held-out residuals...")
+    pooled = np.concatenate(residual_pool) if residual_pool else np.array([])
+    stat, p, verdict = shapiro_wilk(pooled) if len(pooled) else (0.0, 0.0, "FAIL")
     with open(f"{output_dir}/shapiro_wilk_result.txt", "w") as fh:
         fh.write("Shapiro-Wilk Normality Test\n")
-        fh.write("(evaluated on NF-calibrated validation residuals)\n")
+        fh.write("Measured on standardised residuals from the held-out backtest\n")
+        fh.write("day, pooled across satellites. Nothing in the training or\n")
+        fh.write("calibration path saw this window.\n\n")
+        fh.write(f"Samples:   {len(pooled)}\n")
         fh.write(f"Statistic: {stat:.6f}\n")
         fh.write(f"p-value:   {p:.6f}\n")
-        fh.write(f"Result:    {sw_result}\n")
+        fh.write(f"Result:    {verdict}\n")
 
-    # ── [6/8] Q-Q plot ──────────────────────────────────────────────────────
-    print("[6/8] Saving Q-Q plot...")
-    save_qq_plot(res_sw, path=f"{output_dir}/qq_plot.png")
+    print("[6/6] Saving plots...")
+    if len(pooled):
+        save_qq_plot(pooled, path=f"{output_dir}/qq_plot.png")
+        _save_histogram(pooled, f"{output_dir}/residual_histogram.png")
 
-    # ── [7/8] Residual histogram ────────────────────────────────────────────
-    print("[7/8] Saving residual histogram...")
+    print(f"Done. Shapiro-Wilk {verdict} (p={p:.4f}); {len(fallbacks)} fallbacks.")
+    return {
+        "rmse_ns":             all_rmse,
+        "baseline_rmse_ns":    baseline_rmse,
+        "shapiro_wilk_p":      float(p),
+        "shapiro_wilk_result": verdict,
+        "fallbacks":           fallbacks,
+    }
+
+
+def _write_report(path: str, all_rmse: dict, baseline_rmse: dict,
+                  linear_rmse: dict, fallbacks: list, backtest: bool) -> None:
+    """
+    Write the evaluation report against both baselines.
+
+    Args:
+        path:          output file path
+        all_rmse:      model RMSE per satellite/error key
+        baseline_rmse: persistence RMSE for the same keys
+        linear_rmse:   linear-extrapolation RMSE for the same keys
+        fallbacks:     descriptions of any failed combinations
+        backtest:      whether the backtest plan ran at all
+    """
+    with open(path, "w") as fh:
+        fh.write("OrbitalMind Evaluation Report\n" + "=" * 60 + "\n\n")
+        if not backtest:
+            fh.write("Backtest skipped (--no-backtest): no accuracy figures.\n\n")
+        else:
+            fh.write("RMSE on the held-out final 24 hours, in ORIGINAL units\n")
+            fh.write("(ns for clock, metres for ephemeris).\n\n")
+            fh.write("Two baselines. 'persist' carries the last observed value\n")
+            fh.write("forward. 'linear' fits the drift rate over the preceding day\n")
+            fh.write("and extends it. For a satellite clock the drift is close to\n")
+            fh.write("linear, so persistence is easy to beat and linear is the\n")
+            fh.write("baseline that actually tests whether the ensemble earns its\n")
+            fh.write("keep. Report both; quote linear.\n\n")
+            for key, rmse in all_rmse.items():
+                base = baseline_rmse.get(key, {})
+                lin  = linear_rmse.get(key, {})
+                fh.write(f"{key}:\n")
+                for horizon, val in rmse.items():
+                    b, l = base.get(horizon), lin.get(horizon)
+                    parts = f"  {horizon:6s}: {val:12.6f}"
+                    if b is not None:
+                        parts += f"   persist {b:12.6f}"
+                    if l is not None:
+                        parts += (f"   linear {l:12.6f}   "
+                                  f"{'BEATS' if val < l else 'LOSES TO'} linear")
+                    fh.write(parts + "\n")
+                fh.write("\n")
+
+            wins = sum(1 for k, r in all_rmse.items()
+                       if k in baseline_rmse and r["1hr"] < baseline_rmse[k]["1hr"])
+            lwins = sum(1 for k, r in all_rmse.items()
+                        if k in linear_rmse and r["1hr"] < linear_rmse[k]["1hr"])
+            fh.write(f"Beat persistence at 1hr:        {wins}/{len(all_rmse)}\n")
+            fh.write(f"Beat linear extrapolation @1hr: {lwins}/{len(all_rmse)}\n\n")
+
+        fh.write(f"Fallbacks used: {len(fallbacks)}\n")
+        for item in fallbacks:
+            fh.write(f"  - {item}\n")
+
+
+def _save_histogram(residuals: np.ndarray, path: str) -> None:
+    """
+    Save a residual histogram against the fitted normal density.
+
+    Args:
+        residuals: standardised held-out residuals
+        path:      output PNG path
+    """
+    from scipy import stats as _st
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.hist(res_sw, bins=30, density=True, alpha=0.7, label="NF residuals")
-    xg = np.linspace(res_sw.min(), res_sw.max(), 200)
-    ax.plot(xg, stats.norm.pdf(xg, res_sw.mean(), res_sw.std()), "r-", label="N(μ,σ²)")
-    ax.set_xlabel("Residual value")
+    ax.hist(residuals, bins=40, density=True, alpha=0.7, label="held-out residuals")
+    xg = np.linspace(residuals.min(), residuals.max(), 200)
+    ax.plot(xg, _st.norm.pdf(xg, residuals.mean(), residuals.std()), "r-", label="N(mu, sigma^2)")
+    ax.set_xlabel("Standardised residual")
     ax.set_ylabel("Density")
-    ax.set_title("NF-Calibrated Residuals vs. Gaussian")
+    ax.set_title("Held-Out Residuals vs Gaussian")
     ax.legend()
     fig.tight_layout()
-    fig.savefig(f"{output_dir}/residual_histogram.png", dpi=100)
+    fig.savefig(path, dpi=100)
     plt.close(fig)
-
-    # ── [8/8] Summary ───────────────────────────────────────────────────────
-    print(f"[8/8] Done.  Shapiro-Wilk: {sw_result}  (p={p:.4f})")
-    return {
-        "rmse":                all_rmse,
-        "shapiro_wilk_p":      float(p),
-        "shapiro_wilk_result": sw_result,
-    }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="OrbitalMind full pipeline")
     parser.add_argument("--data",   required=True,     help="Path to input CSV")
     parser.add_argument("--output", default="outputs", help="Output directory")
-    args    = parser.parse_args()
-    results = run_pipeline(args.data, args.output)
-    print(results)
+    parser.add_argument("--no-backtest", action="store_true",
+                        help="Skip the held-out scoring pass (roughly halves runtime)")
+    parser.add_argument("--max-satellites", type=int, default=0,
+                        help="Process only the first N satellites (smoke testing)")
+    args = parser.parse_args()
+    run_pipeline(args.data, args.output,
+                 backtest=not args.no_backtest,
+                 max_satellites=args.max_satellites)

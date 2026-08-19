@@ -1,14 +1,25 @@
-# OrbitalMind — Python 3.12.3 compatible
-# Install with: pip install -r requirements.txt
+# OrbitalMind — pinned to the versions this project is actually verified on.
+#
+# Requires Python 3.10-3.12. Check with: python3 --version
+#
+# Install with:
+#   python3 -m venv venv
+#   source venv/bin/activate
+#   pip install -r requirements.txt
+#
+# NOTE ON TORCH: this file previously pinned torch==2.1.0 / torchvision==0.16.0.
+# torch 2.1.0 publishes no cp312 wheel, so `pip install -r requirements.txt`
+# failed outright on Python 3.12 even though the project's own venv had been
+# built with 2.2.0. The pins below match what the pipeline is tested against.
 
 # Core data
 numpy==1.26.4
 pandas==2.2.1
 scipy==1.13.0
 
-# Deep learning
-torch==2.1.0
-torchvision==0.16.0
+# Deep learning (2.2.0 is the first release with Python 3.12 wheels)
+torch==2.2.0
+torchvision==0.17.0
 
 # Sequence models
 pytorch-forecasting==1.1.1

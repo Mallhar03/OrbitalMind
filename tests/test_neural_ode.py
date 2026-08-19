@@ -20,7 +20,7 @@ def trained_node_geo():
     df = generate_synthetic_gnss_data(seed=42)
     preprocessed = preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
     data = preprocessed['trend'] + preprocessed['periodic']
-    model, metrics = train_neural_ode(data, 'GEO', 'ClockError_ns')
+    model, metrics = train_neural_ode(data[:480], 'GEO', 'ClockError_ns')
     return model, metrics, data
 
 
@@ -29,7 +29,7 @@ def trained_node_meo():
     df = generate_synthetic_gnss_data(seed=42)
     preprocessed = preprocess_satellite(df, 'MEO-01', 'ClockError_ns')
     data = preprocessed['trend'] + preprocessed['periodic']
-    model, metrics = train_neural_ode(data, 'MEO', 'ClockError_ns')
+    model, metrics = train_neural_ode(data[:480], 'MEO', 'ClockError_ns')
     return model, metrics, data
 
 

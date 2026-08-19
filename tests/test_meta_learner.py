@@ -32,18 +32,18 @@ def all_model_outputs():
     val_data = data[480:576]
     last_train_seq = train_data[-96:]
 
-    lstm_model, _ = train_lstm(data, 'GEO', 'ClockError_ns')
-    tcn_model, _ = train_tcn_lstm(data, 'GEO', 'ClockError_ns')
-    node_model, _ = train_neural_ode(data, 'GEO', 'ClockError_ns')
+    lstm_model, _ = train_lstm(train_data, 'GEO', 'ClockError_ns')
+    tcn_model, _ = train_tcn_lstm(train_data, 'GEO', 'ClockError_ns')
+    node_model, _ = train_neural_ode(train_data, 'GEO', 'ClockError_ns')
 
-    tft_df = prepare_tft_dataframe(preprocessed)
+    tft_df = prepare_tft_dataframe(preprocessed).iloc[:480].reset_index(drop=True)
     tft_model, _ = train_tft(tft_df, 'GEO', 'ClockError_ns')
 
     outputs = {
         'lstm':       predict_lstm(lstm_model, last_train_seq, n_steps=96),
         'tcn_lstm':   predict_tcn_lstm(tcn_model, last_train_seq, n_steps=96),
         'neural_ode': predict_neural_ode(node_model, last_train_seq, n_steps=96),
-        'tft':        predict_tft(tft_model, tft_df, n_steps=96),
+        'tft':        predict_tft(tft_model, last_train_seq, n_steps=96),
     }
     return outputs, val_data, data
 

@@ -13,3 +13,6 @@ outputs/*.csv
 outputs/*.png
 outputs/*.txt
 !outputs/.gitkeep
+
+# Claude Flow per-session state (machine-local, not project source)
+.claude-flow/

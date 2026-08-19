@@ -15,28 +15,37 @@ python src/orbitalmind/run_pipeline.py --data data/synthetic/gnss_synthetic.csv
 ---
 
 ## PIPELINE STAGES IN ORDER
-1. Load and validate input CSV (data_adapter)
-2. Split train (days 1-7) and test (day 8)
-3. Split GEO and MEO satellites
-4. For each satellite, for each error type:
-   a. preprocess_satellite()
-   b. build_feature_matrix()
-   c. train_lstm() + predict_lstm()
-   d. train_tcn_lstm() + predict_tcn_lstm()
-   e. train_tft() + predict_tft()
-   f. train_neural_ode() + predict_neural_ode()
-   g. train_diffusion() on residuals
-   h. train_meta_learner() on all predictions
-   i. predict_meta_learner() for Day 8
-   j. train_normalizing_flow() on meta residuals
-   k. apply_normalizing_flow() to final predictions
-5. Generate outputs
+1. Load input CSV, validate required columns
+2. Per satellite: read OrbitType from the COLUMN (never from the ID prefix)
+3. For each satellite, for each error type:
+   a. preprocess_satellite()   -> observed + original_cleaned + IMFs
+   b. compute_splits(len(combined))  -> backtest and submission plans
+   c. for each plan:
+        train_lstm / train_tcn_lstm / train_tft / train_neural_ode
+          on EXACTLY plan.train
+        forecast plan.cal
+        train_meta_learner()        on the cal_meta half
+        train_normalizing_flow()    on the cal_flow half (out-of-sample)
+        forecast plan.target from plan.input
+        apply_normalizing_flow()    scalar bias correction
+        predictive_interval()       sigma and 95% bounds
+        reconstruct anchored on observed[t0]
+   d. backtest -> RMSE in ns/m vs persistence AND linear baselines
+      submission -> the rows written to submission.csv
+4. Generate outputs
+
+NOT YET WIRED IN, though the proposal credits both:
+   build_feature_matrix()  -- features/ is orphaned
+   train_diffusion()       -- diffusion.py is orphaned; the fourth ensemble
+                              member is currently a plain LSTM
 
 ---
 
 ## OUTPUT FILES
-outputs/submission.csv          ← Day 8 predictions for all satellites
-outputs/evaluation_report.txt  ← RMSE at all 5 horizons
+outputs/submission.csv          ← Day 8 predictions, plus sigma and 95% bounds
+                                   per error type (11 columns)
+outputs/evaluation_report.txt  ← RMSE at all 5 horizons in ns/m, against BOTH
+                                   the persistence and linear baselines
 outputs/qq_plot.png            ← Q-Q plot of residuals
 outputs/residual_histogram.png ← Histogram with Gaussian overlay
 outputs/shapiro_wilk_result.txt← p-value and pass/fail
@@ -46,8 +55,12 @@ outputs/shapiro_wilk_result.txt← p-value and pass/fail
 ## FUNCTION SIGNATURE
 
 File: src/orbitalmind/run_pipeline.py
-def run_pipeline(data_path: str, output_dir: str = "outputs") -> dict
-    # returns evaluation_results dict
+def run_pipeline(data_path: str, output_dir: str = "outputs",
+                 backtest: bool = True, max_satellites: int = 0) -> dict
+    # returns rmse_ns, baseline_rmse_ns, shapiro_wilk_p,
+    #         shapiro_wilk_result, fallbacks
+
+# CLI flags: --data --output --no-backtest --max-satellites
 
 if __name__ == "__main__":
     import argparse

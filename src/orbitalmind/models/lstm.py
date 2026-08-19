@@ -5,6 +5,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from orbitalmind.paths import models_dir
+
 SEQ_LEN    = 96
 HIDDEN     = 64
 N_LAYERS   = 2
@@ -12,7 +14,7 @@ DROPOUT    = 0.2
 BATCH_SIZE = 16
 EPOCHS     = 30
 LR         = 0.001
-SAVE_DIR   = "models/saved"
+SAVE_DIR   = models_dir()
 
 
 def _make_sequences(data: np.ndarray, seq_len: int):
@@ -67,7 +69,7 @@ def train_lstm(
     torch.manual_seed(42)
     dev = torch.device(device)
 
-    train_data = np.asarray(data_array[:480], dtype=np.float32)
+    train_data = np.asarray(data_array, dtype=np.float32)
     X_np, y_np = _make_sequences(train_data, SEQ_LEN)
     X_t = torch.tensor(X_np).unsqueeze(-1)  # (n, seq, 1)
     y_t = torch.tensor(y_np)

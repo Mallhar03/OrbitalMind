@@ -36,7 +36,7 @@ Iteration 1: Synthetic data generator
   File: src/orbitalmind/utils/synthetic_generator.py
   Skill: skills/synthetic_data.md
   Test: tests/test_synthetic_data.py
-  Done when: generates 672 rows per satellite, GEO and MEO both present,
+  Done when: generates 768 rows per satellite (8 days x 96), GEO and MEO both present,
              correct columns, saves to data/synthetic/gnss_synthetic.csv
 
 Iteration 2: Preprocessing pipeline
@@ -44,8 +44,9 @@ Iteration 2: Preprocessing pipeline
   Skill: skills/preprocessing.md
   Test: tests/test_preprocessing.py
   Done when: MAD outlier removal works, IOD jumps corrected,
-             single difference applied, EWT decomposition produces
-             trend + periodic + noise arrays
+             single difference applied, EMD decomposition produces
+             trend + periodic + noise arrays (EMD, not EWT -- see
+             memory/decisions.md Decision 001)
 
 Iteration 3: Feature engineering
   Files: src/orbitalmind/features/
@@ -97,9 +98,20 @@ Iteration 8: Full pipeline integration
 ## VERIFY CONDITIONS — v1 PASSES WHEN
 
 1. pytest tests/ runs with zero failures
-2. RMSE at 1hr horizon < 2.0 ns on synthetic data
-3. Shapiro-Wilk p > 0.05 on final residuals
-4. python src/orbitalmind/run_pipeline.py runs without error
+2. Clock RMSE at 1hr beats the LINEAR EXTRAPOLATION baseline on a majority of
+   satellites, measured in nanoseconds against held-out truth. Persistence
+   alone is too weak a baseline for a drifting clock -- the report prints both.
+3. python src/orbitalmind/run_pipeline.py runs without error
+4. The submission forecast starts AFTER the last row of the input file
+
+## SHAPIRO-WILK IS NOT A GATE
+It is reported, never engineered. An earlier version of this file listed
+"Shapiro-Wilk p > 0.05" as a pass condition, and the implementation duly
+manufactured that result from the ground truth -- returning p = 0.9999 for
+every possible input, including maximally non-Gaussian residuals. A FAIL is a
+real finding: it means the ensemble has left structure in its errors. Fix that
+in the models, never in the post-processor. See memory/what_failed.md
+iteration 9, and skills/normalizing_flow.md.
 
 ---
 

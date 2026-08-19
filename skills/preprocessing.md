@@ -53,14 +53,22 @@ Correction:
     Store first_value for reconstruction later
 
 Reconstruction formula (used after prediction):
-    reconstructed = differenced.cumsum() + first_value
+    reconstructed = observed[t0] + differenced.cumsum()
 
-### Step 4: EWT Signal Decomposition
-Library: EMD-signal (PyEMD) — use EEMD class
-    from PyEMD import EEMD
-    eemd = EEMD()
-    eemd.noise_width = 0.05
-    IMFs = eemd.eemd(differenced_values)
+NOT first_value. The anchor is the last OBSERVED value before the forecast
+window, taken from the measurement frame. Using first_value carries the entire
+drift since day 1 into the forecast (455-3110 ns on real data), and using the
+IOD-corrected frame adds the accumulated jump offset on top. See
+ARCHITECTURE.md section 3.
+
+### Step 4: EMD Signal Decomposition
+The proposal deck calls this EWT, but its own tech-stack slide lists
+PyEMD; the code uses standard EMD. Decision 001 in memory/decisions.md
+records why. Standard EMD (NOT EEMD) is required: it guarantees exact
+reconstruction, sum(IMFs) == input to floating-point precision.
+    from PyEMD import EMD
+    emd = EMD()
+    IMFs = emd.emd(differenced_values)
     noise    = IMFs[0]              # highest frequency
     periodic = np.sum(IMFs[1:-1], axis=0)  # middle IMFs
     trend    = IMFs[-1]             # lowest frequency (residual)
@@ -73,7 +81,13 @@ File: src/orbitalmind/preprocessing/outlier_removal.py
 def remove_outliers_mad(series: pd.Series, threshold: float = 3.5) -> pd.Series
 
 File: src/orbitalmind/preprocessing/iod_correction.py
-def correct_iod_jumps(series: pd.Series, threshold_ns: float = 2.0) -> pd.Series
+def correct_iod_jumps(series: pd.Series, threshold_ns: float | None = None) -> pd.Series
+    # threshold_ns=None derives the threshold from the robust spread of
+    # THIS satellite's own first differences:
+    #     |median(d)| + 8 * 1.4826 * MAD(d)
+    # A fixed 2.0 ns flagged 671 of 671 steps as jumps on the real G02
+    # and G03 clocks and removed their entire trend.
+def count_jumps(series: pd.Series, threshold_ns: float | None = None) -> int
 
 File: src/orbitalmind/preprocessing/differencing.py
 def single_difference(series: pd.Series) -> tuple[pd.Series, float]
@@ -98,7 +112,8 @@ def preprocess_satellite(
 - Process ClockError_ns and EphemerisError_m separately
 - Never modify the original DataFrame — always work on copies
 - IOD threshold for EphemerisError_m is 1.0 m (not 2.0 ns)
-- EEMD is non-deterministic — set numpy seed 42 before every EEMD call
+- decompose_signal() sets numpy seed 42 before every EMD call. Standard EMD
+  is deterministic; the seed is belt-and-braces in case EEMD is ever swapped in.
 
 ---
 
@@ -116,6 +131,10 @@ ALL must pass:
 ---
 
 ## FAILURE MODES
-If EEMD hangs: input signal too short — check series length > 100
+If EMD hangs: input signal too short — check series length > 100
+If EMD returns 0 or 1 IMFs: the signal is constant or near-constant.
+    decompose_signal() handles this by returning the series as trend with
+    zero periodic and noise. A satellite in this state will show zero
+    variance downstream — check the input data before blaming the models.
 If reconstruction error > 1e-6: IMF sum is wrong — check IMFs[1:-1] slice
 If IOD correction overshoots: threshold too low — raise to 3.0 temporarily

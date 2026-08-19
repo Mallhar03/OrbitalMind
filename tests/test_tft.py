@@ -21,7 +21,7 @@ def tft_setup():
     df = generate_synthetic_gnss_data(seed=42)
     preprocessed = preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
     data = preprocessed['trend'] + preprocessed['periodic']
-    tft_df = prepare_tft_dataframe(preprocessed)
+    tft_df = prepare_tft_dataframe(preprocessed).iloc[:480].reset_index(drop=True)
     model, metrics = train_tft(tft_df, 'GEO', 'ClockError_ns')
     return model, metrics, data, tft_df
 
@@ -31,7 +31,7 @@ def lstm_24hr_rmse():
     df = generate_synthetic_gnss_data(seed=42)
     preprocessed = preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
     data = preprocessed['trend'] + preprocessed['periodic']
-    model, _ = train_lstm(data, 'GEO', 'ClockError_ns')
+    model, _ = train_lstm(data[:480], 'GEO', 'ClockError_ns')
     val_data = data[480:576]
     preds = predict_lstm(model, data[480-96:480], n_steps=96)
     rmse = compute_rmse_horizons(val_data, preds)
@@ -46,7 +46,7 @@ def test_tft_trains_without_error(tft_setup):
 
 def test_tft_prediction_shape(tft_setup):
     model, metrics, data, tft_df = tft_setup
-    preds = predict_tft(model, tft_df, n_steps=96)
+    preds = predict_tft(model, data[480 - 96:480], n_steps=96)
     assert preds.shape == (96,), \
         f"Expected (96,), got {preds.shape}"
 
@@ -54,7 +54,7 @@ def test_tft_prediction_shape(tft_setup):
 def test_tft_beats_lstm_at_24hr(tft_setup, lstm_24hr_rmse):
     model, metrics, data, tft_df = tft_setup
     val_data = data[480:576]
-    preds = predict_tft(model, tft_df, n_steps=96)
+    preds = predict_tft(model, data[480 - 96:480], n_steps=96)
     rmse = compute_rmse_horizons(val_data, preds)
     assert rmse['24hr'] < lstm_24hr_rmse, \
         f"TFT RMSE at 24hr ({rmse['24hr']:.4f}) must beat LSTM ({lstm_24hr_rmse:.4f})"
@@ -62,7 +62,7 @@ def test_tft_beats_lstm_at_24hr(tft_setup, lstm_24hr_rmse):
 
 def test_tft_prediction_not_nan(tft_setup):
     model, metrics, data, tft_df = tft_setup
-    preds = predict_tft(model, tft_df, n_steps=96)
+    preds = predict_tft(model, data[480 - 96:480], n_steps=96)
     assert not np.any(np.isnan(preds)), \
         "NaN values in TFT predictions"
 
@@ -75,7 +75,7 @@ def test_tft_model_saved():
 def test_tft_meo_trains_separately():
     df = generate_synthetic_gnss_data(seed=42)
     preprocessed = preprocess_satellite(df, 'MEO-01', 'ClockError_ns')
-    tft_df = prepare_tft_dataframe(preprocessed)
+    tft_df = prepare_tft_dataframe(preprocessed).iloc[:480].reset_index(drop=True)
     model, metrics = train_tft(tft_df, 'MEO', 'ClockError_ns')
     assert model is not None
 
@@ -90,7 +90,7 @@ def test_tft_fallback_flag_on_failure():
 def test_tft_rmse_1hr_acceptable(tft_setup):
     model, metrics, data, tft_df = tft_setup
     val_data = data[480:576]
-    preds = predict_tft(model, tft_df, n_steps=96)
+    preds = predict_tft(model, data[480 - 96:480], n_steps=96)
     rmse = compute_rmse_horizons(val_data[:4], preds[:4])
     assert rmse['1hr'] < 3.0, \
         f"TFT RMSE at 1hr too high: {rmse['1hr']:.4f}. TFT is weaker at short horizons but must be reasonable."

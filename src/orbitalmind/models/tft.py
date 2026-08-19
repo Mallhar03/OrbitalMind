@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from orbitalmind.paths import models_dir
+
 SEQ_LEN      = 96
 PRED_LEN     = 96
 HIDDEN       = 16
@@ -21,8 +23,7 @@ BATCH_SIZE   = 16
 EPOCHS       = 20
 LR           = 0.03
 GRAD_CLIP    = 0.1
-TRAIN_END    = 480
-SAVE_DIR     = "models/saved"
+SAVE_DIR     = models_dir()
 
 TFT_FALLBACK_FLAG: bool = False  # True only if training fails catastrophically
 
@@ -61,6 +62,28 @@ class DirectTFT(nn.Module):
         return corr + base                         # skip: predict = correction + input
 
 
+def tft_dataframe_from_array(values: np.ndarray) -> pd.DataFrame:
+    """
+    Wrap a 1-D signal in the TFT-compatible DataFrame format.
+
+    Lets the pipeline hand train_tft an arbitrary training window rather than
+    the whole series, which is what removed the fixed data[:480] slice.
+
+    Args:
+        values: 1-D array of combined (trend + periodic) signal values
+    Returns:
+        DataFrame with columns [time_idx, group_id, target, time_since_start].
+    """
+    combined = np.asarray(values, dtype=np.float64).flatten()
+    n = len(combined)
+    return pd.DataFrame({
+        "time_idx":         np.arange(n, dtype=np.int64),
+        "group_id":         ["sat"] * n,
+        "target":           combined,
+        "time_since_start": np.linspace(0.0, 1.0, n),
+    })
+
+
 def prepare_tft_dataframe(preprocessed_data: dict) -> pd.DataFrame:
     """
     Convert preprocessed satellite data into the TFT-compatible DataFrame format.
@@ -70,14 +93,9 @@ def prepare_tft_dataframe(preprocessed_data: dict) -> pd.DataFrame:
     Returns:
         DataFrame with columns [time_idx, group_id, target, time_since_start].
     """
-    combined = preprocessed_data["trend"] + preprocessed_data["periodic"]
-    n = len(combined)
-    return pd.DataFrame({
-        "time_idx":        np.arange(n, dtype=np.int64),
-        "group_id":        ["sat"] * n,
-        "target":          combined,
-        "time_since_start": np.linspace(0.0, 1.0, n),
-    })
+    return tft_dataframe_from_array(
+        preprocessed_data["trend"] + preprocessed_data["periodic"]
+    )
 
 
 def _make_direct_sequences(data: np.ndarray, seq_len: int, pred_len: int):
@@ -110,9 +128,7 @@ def train_tft(
     torch.manual_seed(42)
     dev = torch.device(device)
 
-    data       = df["target"].values.astype(np.float32)
-    train_data = data[:TRAIN_END]
-    val_data   = data[TRAIN_END:TRAIN_END + PRED_LEN]
+    train_data = df["target"].values.astype(np.float32)
 
     X_np, y_np = _make_direct_sequences(train_data, SEQ_LEN, PRED_LEN)
     X_t = torch.tensor(X_np).unsqueeze(-1)   # (n, seq, 1)
@@ -138,16 +154,18 @@ def train_tft(
             epoch_loss += loss.item()
         final_train_loss = epoch_loss / len(loader)
 
-    # Validation loss on days 6-7
+    # Fit-quality check on the tail of the training window. This is in-sample
+    # by construction; the honest out-of-sample number comes from the
+    # pipeline's backtest plan, not from here.
     model.eval()
     with torch.no_grad():
-        val_input = torch.tensor(
-            train_data[-SEQ_LEN:], dtype=torch.float32
+        tail_input = torch.tensor(
+            train_data[-(SEQ_LEN + PRED_LEN):-PRED_LEN], dtype=torch.float32
         ).unsqueeze(0).unsqueeze(-1).to(dev)
-        val_preds  = model(val_input).squeeze(0).cpu().numpy()
-        val_target = val_data[:PRED_LEN]
-        n = min(len(val_target), len(val_preds))
-        final_val_loss = float(np.mean((val_target[:n] - val_preds[:n]) ** 2))
+        tail_preds  = model(tail_input).squeeze(0).cpu().numpy()
+        tail_target = train_data[-PRED_LEN:]
+        n = min(len(tail_target), len(tail_preds))
+        final_val_loss = float(np.mean((tail_target[:n] - tail_preds[:n]) ** 2))
 
     os.makedirs(SAVE_DIR, exist_ok=True)
     torch.save(model.state_dict(), f"{SAVE_DIR}/tft_{orbit_type}_{error_col}.ckpt")
@@ -161,27 +179,34 @@ def train_tft(
 
 def predict_tft(
     model: nn.Module,
-    last_known_df: pd.DataFrame,
+    input_sequence: np.ndarray,
     n_steps: int = 96,
     device: str = "cpu",
 ) -> np.ndarray:
     """
     Generate n_steps direct predictions from the trained TFT.
 
-    Uses the last SEQ_LEN values of the training portion (first TRAIN_END rows)
-    as the encoder input — matching the LSTM baseline evaluation protocol.
+    The caller chooses the encoder input. This used to reach for a fixed
+    data[384:480] slice regardless of what it was asked to predict, which
+    forced run_pipeline to carry a private bypass helper.
 
     Args:
         model: trained DirectTFT instance
-        last_known_df: full DataFrame from prepare_tft_dataframe()
+        input_sequence: 1-D array of the SEQ_LEN most recent values
         n_steps: number of future steps (must be ≤ PRED_LEN)
         device: torch device string
     Returns:
         np.ndarray of shape (n_steps,).
+    Raises:
+        ValueError: if input_sequence is shorter than SEQ_LEN.
     """
-    dev  = torch.device(device)
-    data = last_known_df["target"].values.astype(np.float32)
-    seq  = data[max(0, TRAIN_END - SEQ_LEN):TRAIN_END]   # last SEQ_LEN training values
+    dev = torch.device(device)
+    seq = np.asarray(input_sequence, dtype=np.float32).flatten()
+    if len(seq) < SEQ_LEN:
+        raise ValueError(
+            f"predict_tft needs {SEQ_LEN} input steps, got {len(seq)}"
+        )
+    seq = seq[-SEQ_LEN:]
 
     model.eval()
     with torch.no_grad():

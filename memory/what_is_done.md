@@ -1,6 +1,18 @@
 # Completed Modules
 
-Nothing completed yet. Update this file after each iteration passes verify.
+## READ THIS FIRST
+Every iteration below records 'Metric achieved: pipeline runs clean'. That is
+not a metric -- it cannot distinguish a working model from one predicting a
+constant, and in iteration 9 it turned out that 22 of 31 satellites were doing
+exactly that while reporting RMSE 0.000000. The 'Checker verdict: PASS' lines
+were also self-reported; memory/checker_verdict.md was empty the whole time.
+
+Treat iterations 1-8 below as "code exists and imports", nothing stronger.
+The audited state of the build is in memory/what_failed.md (iteration 9) and
+in ARCHITECTURE.md. From iteration 9 onward, record the measured number and
+the baseline it was measured against.
+
+Update this file after each iteration passes verify.
 
 ## Format for each entry:
 ---
