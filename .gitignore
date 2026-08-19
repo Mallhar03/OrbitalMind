@@ -16,3 +16,6 @@ outputs/*.txt
 
 # Claude Flow per-session state (machine-local, not project source)
 .claude-flow/
+
+# Local-only 10-day working plan — never push this
+plan/
