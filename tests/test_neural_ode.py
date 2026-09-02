@@ -4,6 +4,7 @@ All tests must pass as part of Iteration 4 gate.
 """
 import pytest
 import numpy as np
+import torch
 import os
 import sys
 
@@ -78,12 +79,42 @@ def test_neural_ode_predictions_in_original_scale(trained_node_geo):
 
 
 def test_neural_ode_geo_meo_separate(trained_node_geo, trained_node_meo):
-    geo_model, _, geo_data = trained_node_geo
-    meo_model, _, meo_data = trained_node_meo
-    geo_preds = predict_neural_ode(geo_model, geo_data[-96:])
-    meo_preds = predict_neural_ode(meo_model, meo_data[-96:])
-    assert not np.allclose(geo_preds, meo_preds, atol=0.1), \
-        "GEO and MEO predictions are identical — models may not be separate instances"
+    """
+    GEO and MEO must be trained as genuinely separate model instances.
+
+    This test used to assert that the two models' PREDICTIONS differ by more than
+    0.1. That is the wrong invariant, and it began failing once the data became
+    real: two independently trained models fed similar signals can legitimately
+    agree closely, and their agreeing says nothing about whether they are the same
+    object. The forecasts converging is a fact about the data, not a defect.
+
+    What must actually hold is that nothing is shared — separate objects, separate
+    parameter tensors, and weights that genuinely differ because they were fitted
+    to different satellites. That is what this now checks.
+    """
+    geo_model, _, _ = trained_node_geo
+    meo_model, _, _ = trained_node_meo
+
+    assert geo_model is not meo_model, "GEO and MEO share one model object"
+
+    geo_params = dict(geo_model.named_parameters())
+    meo_params = dict(meo_model.named_parameters())
+    assert geo_params.keys() == meo_params.keys(), "models have different architectures"
+
+    # No parameter tensor may be the same object in both models.
+    for name in geo_params:
+        assert geo_params[name] is not meo_params[name], \
+            f"parameter '{name}' is the same tensor in both models"
+
+    # Trained on different satellites, at least some weights must have diverged.
+    differing = [
+        name for name in geo_params
+        if not torch.allclose(geo_params[name], meo_params[name], atol=1e-8)
+    ]
+    assert differing, (
+        "every weight is identical across GEO and MEO — the two models were not "
+        "fitted to different data"
+    )
 
 
 def test_neural_ode_model_saved():

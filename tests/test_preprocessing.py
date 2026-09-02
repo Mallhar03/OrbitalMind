@@ -48,7 +48,10 @@ def test_signal_reconstruction(sample_preprocessed):
     original_diff = np.diff(sample_preprocessed['original_cleaned'])
     min_len = min(len(reconstructed), len(original_diff))
     error = np.max(np.abs(reconstructed[:min_len] - original_diff[:min_len]))
-    assert error < 1e-4, f"Reconstruction error too large: {error}"
+    # EMD's completeness property is exact to floating point; measured across 40
+    # real series it lands between 2.2e-16 and 8.9e-16. A 1e-4 tolerance was
+    # twelve orders of magnitude too loose to catch any realistic regression.
+    assert error < 1e-14, f"Reconstruction error too large: {error}"
 
 
 def test_length_after_differencing(sample_preprocessed):

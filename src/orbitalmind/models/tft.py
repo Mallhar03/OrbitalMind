@@ -15,6 +15,8 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from orbitalmind.paths import models_dir
 
+from orbitalmind.device import resolve_device
+
 SEQ_LEN      = 96
 PRED_LEN     = 96
 HIDDEN       = 16
@@ -111,7 +113,8 @@ def train_tft(
     df: pd.DataFrame,
     orbit_type: str,
     error_col: str,
-    device: str = "cpu",
+    device: str | None = None,
+    model_tag: str | None = None,
 ) -> tuple[object, dict]:
     """
     Train a DirectTFT on the satellite error signal encoded in df.
@@ -119,14 +122,15 @@ def train_tft(
     Args:
         df: DataFrame from prepare_tft_dataframe()
         orbit_type: 'GEO' or 'MEO'
+        model_tag:  identifier for the saved weights (satellite id when available)
         error_col: 'ClockError_ns' or 'EphemerisError_m'
-        device: torch device string
+        device: torch device string, or None to resolve automatically
     Returns:
         (trained model, metrics dict with final_val_loss and final_train_loss)
     """
     global TFT_FALLBACK_FLAG
     torch.manual_seed(42)
-    dev = torch.device(device)
+    dev = resolve_device(device)
 
     train_data = df["target"].values.astype(np.float32)
 
@@ -168,7 +172,7 @@ def train_tft(
         final_val_loss = float(np.mean((tail_target[:n] - tail_preds[:n]) ** 2))
 
     os.makedirs(SAVE_DIR, exist_ok=True)
-    torch.save(model.state_dict(), f"{SAVE_DIR}/tft_{orbit_type}_{error_col}.ckpt")
+    torch.save(model.state_dict(), f"{SAVE_DIR}/tft_{model_tag or orbit_type}_{error_col}.ckpt")
     TFT_FALLBACK_FLAG = False
 
     return model, {
@@ -181,7 +185,7 @@ def predict_tft(
     model: nn.Module,
     input_sequence: np.ndarray,
     n_steps: int = 96,
-    device: str = "cpu",
+    device: str | None = None,
 ) -> np.ndarray:
     """
     Generate n_steps direct predictions from the trained TFT.
@@ -194,13 +198,13 @@ def predict_tft(
         model: trained DirectTFT instance
         input_sequence: 1-D array of the SEQ_LEN most recent values
         n_steps: number of future steps (must be ≤ PRED_LEN)
-        device: torch device string
+        device: torch device string, or None to resolve automatically
     Returns:
         np.ndarray of shape (n_steps,).
     Raises:
         ValueError: if input_sequence is shorter than SEQ_LEN.
     """
-    dev = torch.device(device)
+    dev = resolve_device(device)
     seq = np.asarray(input_sequence, dtype=np.float32).flatten()
     if len(seq) < SEQ_LEN:
         raise ValueError(

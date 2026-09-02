@@ -7,6 +7,8 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from orbitalmind.paths import models_dir
 
+from orbitalmind.device import resolve_device
+
 SEQ_LEN    = 96
 HIDDEN     = 64
 N_LAYERS   = 2
@@ -53,21 +55,26 @@ def train_lstm(
     data_array: np.ndarray,
     orbit_type: str,
     error_col: str,
-    device: str = "cpu",
+    device: str | None = None,
+    model_tag: str | None = None,
 ) -> tuple[nn.Module, dict]:
     """
     Train an LSTMPredictor on the given satellite error signal.
 
     Args:
         data_array: 1-D array of combined (trend + periodic) signal values
-        orbit_type: 'GEO' or 'MEO' — used for model filename
+        orbit_type: 'GEO' or 'MEO'
+        model_tag:  identifier for the saved weights. Models are trained PER
+                    SATELLITE, so a filename keyed only on orbit type makes every
+                    satellite of that type overwrite the previous one and leaves
+                    only the last one's weights on disk.
         error_col: 'ClockError_ns' or 'EphemerisError_m'
-        device: torch device string (always 'cpu' for local runs)
+        device: torch device string, or None to resolve automatically
     Returns:
         (trained model, metrics dict with initial_train_loss and final_train_loss)
     """
     torch.manual_seed(42)
-    dev = torch.device(device)
+    dev = resolve_device(device)
 
     train_data = np.asarray(data_array, dtype=np.float32)
     X_np, y_np = _make_sequences(train_data, SEQ_LEN)
@@ -98,7 +105,7 @@ def train_lstm(
         final_loss = epoch_loss
 
     os.makedirs(SAVE_DIR, exist_ok=True)
-    torch.save(model.state_dict(), f"{SAVE_DIR}/lstm_{orbit_type}_{error_col}.pt")
+    torch.save(model.state_dict(), f"{SAVE_DIR}/lstm_{model_tag or orbit_type}_{error_col}.pt")
 
     return model, {"initial_train_loss": initial_loss, "final_train_loss": final_loss}
 
@@ -107,7 +114,7 @@ def predict_lstm(
     model: nn.Module,
     last_sequence: np.ndarray,
     n_steps: int = 96,
-    device: str = "cpu",
+    device: str | None = None,
 ) -> np.ndarray:
     """
     Generate n_steps ahead predictions via autoregressive rollout.
@@ -116,11 +123,11 @@ def predict_lstm(
         model: trained LSTMPredictor
         last_sequence: 1-D array of the most recent SEQ_LEN values
         n_steps: number of future steps to predict
-        device: torch device string
+        device: torch device string, or None to resolve automatically
     Returns:
         np.ndarray of shape (n_steps,) in original signal units.
     """
-    dev = torch.device(device)
+    dev = resolve_device(device)
     model.eval()
     seq = list(np.asarray(last_sequence, dtype=np.float32)[-SEQ_LEN:])
     preds = []

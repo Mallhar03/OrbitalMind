@@ -50,8 +50,8 @@ Training config (CPU-safe):
 File: src/orbitalmind/models/neural_ode.py
 class ODEFunc(nn.Module)
 class NeuralODEPredictor(nn.Module)
-def train_neural_ode(data_array, orbit_type, error_col, device='cpu') -> tuple[nn.Module, dict]
-def predict_neural_ode(model, last_sequence, n_steps=96, device='cpu') -> np.ndarray
+def train_neural_ode(data_array, orbit_type, error_col, device=None) -> tuple[nn.Module, dict]
+def predict_neural_ode(model, last_sequence, n_steps=96, device=None) -> np.ndarray
 
 ---
 

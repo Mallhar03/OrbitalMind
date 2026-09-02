@@ -64,14 +64,14 @@ Training config: identical to LSTM above
 
 File: src/orbitalmind/models/lstm.py
 class LSTMPredictor(nn.Module)
-def train_lstm(data_array, orbit_type, error_col, device='cpu') -> tuple[nn.Module, dict]
-def predict_lstm(model, last_sequence, n_steps=96, device='cpu') -> np.ndarray
+def train_lstm(data_array, orbit_type, error_col, device=None) -> tuple[nn.Module, dict]
+def predict_lstm(model, last_sequence, n_steps=96, device=None) -> np.ndarray
 
 File: src/orbitalmind/models/tcn_lstm.py
 class TCNBlock(nn.Module)
 class TCNLSTMPredictor(nn.Module)
-def train_tcn_lstm(data_array, orbit_type, error_col, device='cpu') -> tuple[nn.Module, dict]
-def predict_tcn_lstm(model, last_sequence, n_steps=96, device='cpu') -> np.ndarray
+def train_tcn_lstm(data_array, orbit_type, error_col, device=None) -> tuple[nn.Module, dict]
+def predict_tcn_lstm(model, last_sequence, n_steps=96, device=None) -> np.ndarray
 
 File: src/orbitalmind/models/base_trainer.py
 def compute_rmse_horizons(y_true, y_pred) -> dict
@@ -81,7 +81,8 @@ def compute_rmse_horizons(y_true, y_pred) -> dict
 ---
 
 ## CONSTRAINTS
-- device = torch.device('cpu') — hardcoded for local runs
+- device resolves through orbitalmind.device.resolve_device(); pass None to
+  autodetect (CUDA, then Apple MPS, then CPU), or an explicit string to force one
 - torch.manual_seed(42) at top of every train function
 - Train GEO satellites and MEO satellites with separate model instances
 - Save trained model weights to: models/saved/lstm_GEO_clock.pt etc

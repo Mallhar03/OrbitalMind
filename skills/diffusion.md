@@ -43,17 +43,27 @@ Training:
 ## FUNCTION SIGNATURES
 
 File: src/orbitalmind/models/diffusion.py
-class ResidualDiffusion(nn.Module)
-def train_diffusion(residuals_array, device='cpu') -> ResidualDiffusion
+class _ResidualDiffusionModel                      # a plain object, NOT nn.Module
+def train_diffusion(residuals) -> _ResidualDiffusionModel
 def sample_residuals(model, n_samples=1, seq_len=96) -> np.ndarray
+
+Note there is no `device` parameter, and there was never meant to be. This is a
+closed-form Gaussian moment-match, not a neural network — nothing is trained on
+a device. A previous correction pass mechanically rewrote `device='cpu'` to
+`device=None` here, matching the other four models, and documented a parameter
+that does not exist on either side.
 
 ---
 
 ## CONSTRAINTS
-- Input residuals_array shape must be (n_windows, 96)
+- Input residuals shape must be (n_windows, 96)
 - Each window = one 24-hour residual sequence
-- torch.manual_seed(42) before training
 - Output samples must be same scale as input residuals
+
+Note: this model is NOT wired into run_pipeline.py. The deck sells a four-model
+ensemble including Diffusion (C-01, C-11), but nothing imports this module, so
+the ensemble a judge would actually run is smaller than the slide. Open item for
+the S4 gate.
 
 ---
 

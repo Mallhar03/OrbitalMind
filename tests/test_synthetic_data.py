@@ -64,10 +64,42 @@ def test_clock_error_range(synthetic_df):
 
 
 def test_ephemeris_error_range(synthetic_df):
-    min_val = synthetic_df['EphemerisError_m'].min()
-    max_val = synthetic_df['EphemerisError_m'].max()
-    assert min_val >= -5 and max_val <= 5, \
-        f"EphemerisError_m out of realistic range [-5, 5]. Got [{min_val:.2f}, {max_val:.2f}]"
+    """
+    Ephemeris error must be physically plausible and, crucially, unsaturated.
+
+    This test previously asserted the range [-5, 5] m. That bound held only
+    because the generator clipped to it, so the test was encoding the clipping
+    rather than the physics -- and the clipping was a real defect: it pinned 801
+    GEO rows, 34.8% of all GEO data, at exactly +5.000 m. Persistence then scored
+    0.000 against them and the model scored up to 65 m, so those rows measured a
+    clipping artifact instead of forecasting skill.
+
+    The bound is now set from physics rather than from the old clip: broadcast
+    orbit errors run to a few metres for MEO and larger for geosynchronous
+    satellites, while anything beyond tens of metres would indicate a generator
+    fault. The saturation check below is the stronger assertion, and is what
+    would actually have caught the original defect.
+    """
+    values = synthetic_df['EphemerisError_m']
+    min_val, max_val = values.min(), values.max()
+
+    assert -50 < min_val and max_val < 50, \
+        f"EphemerisError_m implausible for any GNSS orbit: [{min_val:.2f}, {max_val:.2f}]"
+
+    # MEO orbits are better determined than geosynchronous ones.
+    meo = synthetic_df[synthetic_df['OrbitType'] == 'MEO']['EphemerisError_m']
+    assert meo.abs().max() < 15, \
+        f"MEO ephemeris error {meo.abs().max():.2f} m is too large to be realistic"
+
+    # The real guard: no value may pile up on a boundary. Saturated values carry
+    # no information, and a model trained on them learns a ceiling that does not
+    # exist in the real signal.
+    for bound in (min_val, max_val):
+        pinned = int((values == bound).sum())
+        assert pinned < 10, (
+            f"{pinned} rows sit at exactly {bound:.3f} m — the distribution is "
+            f"saturating, which is the clipping defect returning"
+        )
 
 
 def test_csv_file_exists():

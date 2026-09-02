@@ -1,4 +1,23 @@
 # Skill: Temporal Fusion Transformer (TFT)
+
+> **CORRECTION, 2026-09-01 — this file describes a library the project does not use.**
+>
+> Everything below is written as if Iteration 5 uses the `pytorch-forecasting`
+> library. It does not. `src/orbitalmind/models/tft.py` implements `DirectTFT`, a
+> hand-written single-head `nn.TransformerEncoderLayer` with a Linear skip
+> connection. There is no `import pytorch_forecasting` anywhere in the codebase,
+> although the package is still pinned in `requirements.txt`.
+>
+> The model is real, trained and tested — it is attention-based multi-horizon
+> forecasting, and it works. It is simply not the reference TFT implementation,
+> so the install instructions, the "DATAFRAME FORMAT REQUIRED BY
+> PYTORCH-FORECASTING" section and the version-conflict failure modes below are
+> all inapplicable.
+>
+> See `.claude/audit/DECK-CORRECTIONS.md` item 6 for the wording to use with
+> judges, and `.claude/CLAUDE.md` for the corrected tech-stack entry.
+
+
 # Iteration 5
 
 ---
@@ -56,7 +75,7 @@ Columns needed:
 
 File: src/orbitalmind/models/tft.py
 def prepare_tft_dataframe(preprocessed_data: dict) -> pd.DataFrame
-def train_tft(df, orbit_type, error_col, device='cpu') -> tuple[object, dict]
+def train_tft(df, orbit_type, error_col, device=None) -> tuple[object, dict]
 def predict_tft(model, last_known_df, n_steps=96) -> np.ndarray
 
 ---

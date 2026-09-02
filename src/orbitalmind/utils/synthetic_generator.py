@@ -1,5 +1,11 @@
 """
 Synthetic GNSS satellite error data generator — Iteration 1.
+
+Values are never clipped. An earlier version clipped ephemeris to [-5, +5] m and
+clock to [-20, +20] ns, which pinned 801 GEO rows -- 34.8% of all GEO data -- at
+exactly +5.000 m. Saturated values carry no information, so those satellites were
+effectively unscoreable, and the models learned a ceiling that does not exist in
+the real signal. Outlier handling belongs in preprocessing, not in generation.
 """
 import os
 import numpy as np
@@ -66,8 +72,6 @@ def generate_synthetic_gnss_data(
                 iod_offset[j:] += np.random.uniform(-0.5, 0.5)
 
         clock += iod_offset
-        clock = np.clip(clock, -20.0, 20.0)
-        eph = np.clip(eph, -5.0, 5.0)
 
         for k in range(n_points):
             rows.append({
@@ -106,8 +110,6 @@ def generate_synthetic_gnss_data(
                 iod_offset[j:] += np.random.uniform(-0.5, 0.5)
 
         clock += iod_offset
-        clock = np.clip(clock, -20.0, 20.0)
-        eph = np.clip(eph, -5.0, 5.0)
 
         for k in range(n_points):
             rows.append({

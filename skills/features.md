@@ -1,4 +1,25 @@
 # Skill: Feature Engineering
+
+> **CORRECTION, 2026-09-01 — this module does not feed the models.**
+>
+> Line 9 below says the feature matrix "is the input to LSTM, TFT, and Neural
+> ODE." That is not true and has not been true. `run_pipeline.py` never imports
+> `build_feature_matrix`, `lag_features`, `rolling_features` or `fft_features`:
+> the whole `features/` package is orphaned. It is correct, it is tested, and
+> nothing in the live pipeline calls it.
+>
+> What actually reaches the ensemble is `run_pipeline._meta_features()` — sine
+> and cosine encodings of the 24-hour and 12-hour cycles plus the horizon step,
+> supplied to the LightGBM meta-learner and gated behind `--features`. FFT
+> amplitudes were tried there and measured **exactly 0.0 gain**, because they
+> describe the history the whole forecast is made from and so cannot vary across
+> the horizon.
+>
+> See Decisions 015 and 016 in `memory/decisions.md`, and
+> `.claude/audit/DECK-CORRECTIONS.md` item 7. `skills/pipeline.md` already states
+> this correctly; this file was missed.
+
+
 # Iteration 3
 
 ---

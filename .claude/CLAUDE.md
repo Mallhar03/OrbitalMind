@@ -17,6 +17,12 @@ Two satellite types that must be handled separately:
 - GEO/GSO: geostationary, 24-hour periodicity, slow drift
 - MEO: moving orbit, 12-hour periodicity, faster dynamics
 
+CORRECTION 2026-08-31: measured on real multi-GNSS data, MEO=12h holds for only
+23 of 88 satellites (26%) on the clock column; 65 of 88 are 24-hour dominant.
+GEO matches for 5 of 7. The orbit-type split itself is not overturned, but the
+periodicity justification above is not what the data shows. See
+memory/ppt_audit/S3-STRICT.md.
+
 ---
 
 ## READ THIS BEFORE EVERY SESSION
@@ -146,7 +152,10 @@ OrbitalMind/
 
 Language: Python 3.10+
 Deep learning: PyTorch 2.x
-Sequence models: pytorch-forecasting (TFT)
+Sequence models: hand-written attention model (models/tft.py DirectTFT —
+                 single-head TransformerEncoderLayer with skip connection).
+                 NOTE: pytorch-forecasting is pinned in requirements.txt but
+                 imported nowhere. See .claude/audit/DECK-CORRECTIONS.md item 6.
 Neural ODE: torchdiffeq
 Normalizing Flow: normflows
 Meta-learner: lightgbm

@@ -185,8 +185,11 @@ fourth member is a plain LSTM, which the proposal never mentions. Closing this
 gap is open work.
 
 Also open: all four models use `nn.MSELoss()`, not the Gaussian likelihood
-loss the proposal claims, and `device="cpu"` is hardcoded in every train and
-predict signature, so nothing uses a GPU.
+loss the proposal claims.
+
+Device selection is no longer hardcoded — every train and predict signature now
+takes `device=None` and resolves through `orbitalmind.device.resolve_device()`,
+which prefers CUDA, then Apple MPS, then CPU.
 
 ---
 

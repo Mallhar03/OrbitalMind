@@ -8,6 +8,8 @@ from torchdiffeq import odeint
 
 from orbitalmind.paths import models_dir
 
+from orbitalmind.device import resolve_device
+
 SEQ_LEN       = 96
 HIDDEN_SIZE   = 32
 BATCH_SIZE    = 8
@@ -83,7 +85,8 @@ def train_neural_ode(
     data_array: np.ndarray,
     orbit_type: str,
     error_col: str,
-    device: str = "cpu",
+    device: str | None = None,
+    model_tag: str | None = None,
 ) -> tuple[nn.Module, dict]:
     """
     Train a NeuralODEPredictor on the given satellite error signal.
@@ -91,13 +94,14 @@ def train_neural_ode(
     Args:
         data_array: 1-D combined (trend + periodic) signal array
         orbit_type: 'GEO' or 'MEO'
+        model_tag:  identifier for the saved weights (satellite id when available)
         error_col: 'ClockError_ns' or 'EphemerisError_m'
-        device: torch device string (always 'cpu' for local runs)
+        device: torch device string, or None to resolve automatically
     Returns:
         (trained model, metrics dict with initial_train_loss and final_train_loss)
     """
     torch.manual_seed(42)
-    dev = torch.device(device)
+    dev = resolve_device(device)
 
     train_data = np.asarray(data_array, dtype=np.float32)
     X_np, y_np = _make_sequences(train_data, SEQ_LEN, TRAIN_STEPS)
@@ -128,7 +132,7 @@ def train_neural_ode(
         final_loss = epoch_loss
 
     os.makedirs(SAVE_DIR, exist_ok=True)
-    torch.save(model.state_dict(), f"{SAVE_DIR}/neural_ode_{orbit_type}_{error_col}.pt")
+    torch.save(model.state_dict(), f"{SAVE_DIR}/neural_ode_{model_tag or orbit_type}_{error_col}.pt")
 
     return model, {"initial_train_loss": float(initial_loss), "final_train_loss": float(final_loss)}
 
@@ -137,7 +141,7 @@ def predict_neural_ode(
     model: nn.Module,
     last_sequence: np.ndarray,
     n_steps: int = 96,
-    device: str = "cpu",
+    device: str | None = None,
 ) -> np.ndarray:
     """
     Generate n_steps smooth predictions using the trained Neural ODE.
@@ -146,11 +150,11 @@ def predict_neural_ode(
         model: trained NeuralODEPredictor
         last_sequence: 1-D array of the most recent SEQ_LEN values
         n_steps: number of future steps to predict
-        device: torch device string
+        device: torch device string, or None to resolve automatically
     Returns:
         np.ndarray of shape (n_steps,) — smooth, physically consistent predictions.
     """
-    dev = torch.device(device)
+    dev = resolve_device(device)
     model.eval()
     seq = np.asarray(last_sequence, dtype=np.float32)[-SEQ_LEN:]
     x   = torch.tensor(seq).unsqueeze(0).unsqueeze(-1).to(dev)  # (1, seq_len, 1)
