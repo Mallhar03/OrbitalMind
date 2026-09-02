@@ -65,8 +65,8 @@ amplifying structure remains and is the main open problem.
 - FFT spectral features reaching a model — the periodicity information supplied to
   the ensemble is explicit 12h/24h encodings, not FFT amplitudes
 
-Slide wording that needs correcting before the deck is presented is listed in
-[`.claude/audit/DECK-CORRECTIONS.md`](.claude/audit/DECK-CORRECTIONS.md).
+Decisions behind the design, and the alternatives rejected, are in
+[`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ---
 
@@ -97,6 +97,10 @@ pytest tests/ --ignore=tests/test_pipeline.py -q     # ~3 min, 161 tests
 
 `tests/test_pipeline.py` runs the whole pipeline and takes ~40 minutes. Run it
 on its own when you actually want end-to-end verification.
+
+`make help` lists the common tasks — fetching data, running the pipeline with or
+without the backtest, tracing one satellite through preprocessing, and the two
+test targets.
 
 ### Getting the real data
 
@@ -250,7 +254,7 @@ ephemeris rows should not be trusted.
   a baseline for a drifting clock, so the report prints both. **Met** — 74/95 on
   the backtest, and the day-8 result beats both baselines at 1 hour.
 - Shapiro-Wilk p is **reported** on held-out residuals — it is an outcome,
-  never a gate to be engineered. See `skills/normalizing_flow.md`.
+  never a gate to be engineered.
 - Full pipeline runs in one command
 
 ## Pipeline flags

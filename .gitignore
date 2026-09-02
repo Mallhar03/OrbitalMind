@@ -33,25 +33,17 @@ scripts/resume_work.sh
 scripts/compare_options.py
 CHECKPOINT.md
 
-# Stage audit records. Kept locally as the working history of how each stage was
-# verified; the conclusions that matter live in README.md, memory/decisions.md
-# and .claude/audit/DECK-CORRECTIONS.md.
-memory/ppt_audit/
-
-# Audit machinery — the process that produced the findings. Only the actionable
-# output (.claude/audit/DECK-CORRECTIONS.md) is tracked.
-.claude/audit/archive/
-.claude/audit/AUDIT_CONTRACT.md
-.claude/audit/PPT_CLAIMS.md
-.claude/audit/STAGES.md
-.claude/audit/S1-TO-S2-HANDOFF.md
-.claude/audit/S2-TO-S3-HANDOFF.md
-.claude/audit/S3-TO-S4-HANDOFF.md
-
-# Editor/tooling state
-.claude/settings.json
-.claude/agents/
-.claude/commands/
-
 # Backups
 *.bak-*
+
+# Assistant working directories — instructions, audit records, checker prompts,
+# skill notes and iteration memory. Local helpers, not project code. The
+# engineering rationale they contained lives in docs/DECISIONS.md.
+.claude/
+memory/
+skills/
+
+# Session bookkeeping helpers — drive the local checkpoint/memory files above.
+scripts/connector.py
+scripts/resume.py
+scripts/write_checkpoint.py

@@ -82,7 +82,7 @@ predictive spread it learns is not optimistic.
 > Historical note: these windows were once hardcoded as 480 / 576 / 672. That
 > matched only our own 768-row synthetic file. On a 672-row file the "day 8"
 > window fell *inside* the data, so the pipeline re-predicted day 7 and
-> labelled it day 8. See `memory/what_failed.md`, iteration 9.
+> labelled it day 8.
 
 ---
 
@@ -208,8 +208,5 @@ which prefers CUDA, then Apple MPS, then CPU.
 
 ## 7. Where the history lives
 
-* `memory/what_failed.md` — the seven defects found in iteration 9, each with
-  root cause, measurement, and fix. Read this before trusting any older claim.
-* `memory/decisions.md` — architecture decisions and rejected alternatives.
-* `memory/never_do.md` — hard constraints.
-* `skills/*.md` — per-module specifications.
+* `docs/DECISIONS.md` — every architecture decision, its reason, and the
+  alternatives rejected. Read before changing a modelling choice.

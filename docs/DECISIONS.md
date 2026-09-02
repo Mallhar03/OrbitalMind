@@ -1,15 +1,8 @@
-# Architecture Decisions Log
+# Engineering Decisions
 
-Record every significant technical decision here with the reason.
-Before changing an approach, check if it was already decided here.
-
-## Format:
----
-Decision: [what was decided]
-Date: [when]
-Reason: [why this and not something else]
-Alternatives rejected: [what else was considered and why rejected]
----
+Why the pipeline is built the way it is. Each entry records what was decided, the
+reason, and what was rejected — so a choice is not silently reversed by someone who
+only sees the code.
 
 ## Decision 001
 Decision: Use EMD-signal library (PyEMD) for signal decomposition, not PyWavelets
@@ -26,7 +19,7 @@ Reason: GEO satellites have 24-hour periodicity. MEO have 12-hour periodicity.
         A single model averages these out and loses accuracy on both.
 Alternatives rejected: single model with orbit_type as a feature (loses periodicity signal)
 
-CORRECTION 2026-08-31 (S3 strict audit, memory/ppt_audit/S3-STRICT.md):
+CORRECTION 2026-08-31 (measured during the S3 audit):
         The stated Reason does not hold on real multi-GNSS data. Measured across
         all 190 series: GEO 5/7 (71%) match on clock and 3/7 (43%) on ephemeris;
         MEO only 23/88 (26%) on clock and 40/88 (45%) on ephemeris. 65 of 88 MEO
@@ -125,9 +118,9 @@ Reason: The deck promised residuals "engineered Gaussian by design" and "by
         construction". Implemented as written, that guarantee was delivered the
         only way a guarantee can be: the code manufactured it, returning
         p = 0.9999 for every input including maximally non-Gaussian residuals
-        (memory/what_failed.md iteration 9). The wording made an honest
+        (iteration 9). The wording made an honest
         implementation impossible. Exact replacement text is in
-        .claude/audit/DECK-CORRECTIONS.md.
+        the deck-corrections list kept with the team’s slides.
 Alternatives rejected: keeping the wording and making the test pass (that is the
         iteration-9 fraud); dropping the Flow entirely (it does real work
         calibrating the predictive distribution).

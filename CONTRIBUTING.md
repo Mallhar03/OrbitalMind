@@ -79,9 +79,9 @@ changing the post-processor rather than the model is rejected.
 
 ### 6. Docstrings, and docs updated
 
-Every function: Args and Returns. If behaviour changes, `ARCHITECTURE.md`,
-`README.md` and the relevant `skills/*.md` change in the same PR. We had six
-docs describing code that no longer existed.
+Every function: Args and Returns. If behaviour changes, `ARCHITECTURE.md` and
+`README.md` change in the same PR. We once had six docs describing code that no
+longer existed.
 
 ### 7. Scope
 
@@ -110,8 +110,5 @@ understand is how all seven defects survived eight iterations of review.
 
 1. `ARCHITECTURE.md` sections 2 and 3 — the two window plans, the two
    coordinate frames. Most likely to be broken by a well-meaning change.
-2. `memory/what_failed.md` — the seven defects with root causes. Read before
-   trusting any older claim in this repo.
-3. `memory/never_do.md` — hard constraints.
-4. `memory/decisions.md` — settled decisions. Do not relitigate without new
+2. `docs/DECISIONS.md` — settled decisions. Do not relitigate without new
    evidence.

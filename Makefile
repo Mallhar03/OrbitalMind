@@ -1,13 +1,20 @@
-# OrbitalMind — Makefile
-# Claude Code calls these targets. Never run manually mid-iteration.
-# Usage: make <target>
+# OrbitalMind — common tasks
+# Run `make help` for the list.
 
-PYTHON = venv/bin/python3
-PYTEST = venv/bin/python3 -m pytest
-DATA   = data/synthetic/gnss_synthetic.csv
-export PATH := $(CURDIR)/venv/bin:$(PATH)
+PYTHON  = venv/bin/python3
+PYTEST  = venv/bin/python3 -m pytest
+REAL    = data/raw/gnss_real.csv
+SYNTH   = data/synthetic/gnss_synthetic.csv
+WORKERS = 8
 
-# ── SETUP ───────────────────────────────────────────────
+# 8 workers beats 15 on a 16-core machine: LightGBM spawns threads of its own,
+# so more workers oversubscribe the cores and lose the gain to context switching.
+THREADS = OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+
+.PHONY: setup fetch run run-fast explain ablation test test-fast \
+        format format-check clean clean-outputs help
+
+# ── SETUP ────────────────────────────────────────────────
 
 setup:
 	python3 -m venv venv
@@ -15,154 +22,75 @@ setup:
 	mkdir -p models/saved outputs data/synthetic data/raw
 	@echo "Setup complete. Run: source venv/bin/activate"
 
-# ── ITERATION VERIFY TARGETS ────────────────────────────
-# Each target: runs tests, on pass fires connector automatically
+# ── DATA ─────────────────────────────────────────────────
+# Pulls real GNSS products from NASA CDDIS. Needs Earthdata credentials in
+# ~/.netrc under urs.earthdata.nasa.gov. Writes 7 days of input plus a
+# separate holdout file for the 8th day, which training never reads.
 
-verify-1:
-	@echo "[make] Verifying Iteration 1: Synthetic Data"
-	$(PYTEST) tests/test_synthetic_data.py -v
-	@if [ $$? -eq 0 ]; then \
-		$(PYTHON) scripts/connector.py --iteration 1 --status pass; \
-	else \
-		$(PYTHON) scripts/connector.py --iteration 1 --status fail; \
-		exit 1; \
-	fi
+fetch:
+	$(PYTHON) scripts/fetch_data.py --days 8
 
-verify-2:
-	@echo "[make] Verifying Iteration 2: Preprocessing"
-	$(PYTEST) tests/test_preprocessing.py -v
-	@if [ $$? -eq 0 ]; then \
-		$(PYTHON) scripts/connector.py --iteration 2 --status pass; \
-	else \
-		$(PYTHON) scripts/connector.py --iteration 2 --status fail; \
-		exit 1; \
-	fi
+# ── PIPELINE ─────────────────────────────────────────────
 
-verify-3:
-	@echo "[make] Verifying Iteration 3: Features"
-	$(PYTEST) tests/test_features.py -v
-	@if [ $$? -eq 0 ]; then \
-		$(PYTHON) scripts/connector.py --iteration 3 --status pass; \
-	else \
-		$(PYTHON) scripts/connector.py --iteration 3 --status fail; \
-		exit 1; \
-	fi
+run:
+	$(THREADS) $(PYTHON) src/orbitalmind/run_pipeline.py \
+		--data $(REAL) --output outputs --workers $(WORKERS)
 
-verify-4:
-	@echo "[make] Verifying Iteration 4: LSTM + TCN-LSTM + Neural ODE"
-	$(PYTEST) tests/test_lstm.py tests/test_neural_ode.py -v
-	@if [ $$? -eq 0 ]; then \
-		$(PYTHON) scripts/connector.py --iteration 4 --status pass; \
-	else \
-		$(PYTHON) scripts/connector.py --iteration 4 --status fail; \
-		exit 1; \
-	fi
+# Submission only, skipping the backtest pass. Roughly half the runtime,
+# because each satellite then trains its four models once instead of twice.
+run-fast:
+	$(THREADS) $(PYTHON) src/orbitalmind/run_pipeline.py \
+		--data $(REAL) --output outputs --workers $(WORKERS) --no-backtest
 
-verify-5:
-	@echo "[make] Verifying Iteration 5: TFT"
-	$(PYTEST) tests/test_tft.py -v
-	@if [ $$? -eq 0 ]; then \
-		$(PYTHON) scripts/connector.py --iteration 5 --status pass; \
-	else \
-		$(PYTHON) scripts/connector.py --iteration 5 --status fail; \
-		exit 1; \
-	fi
+# Walk one satellite through every preprocessing stage with before/after stats.
+# Usage: make explain SAT=G01
+explain:
+	@test -n "$(SAT)" || (echo "Usage: make explain SAT=G01"; exit 1)
+	$(PYTHON) src/orbitalmind/run_pipeline.py --data $(REAL) --explain $(SAT)
 
-verify-6:
-	@echo "[make] Verifying Iteration 6: Meta-Learner"
-	$(PYTEST) tests/test_meta_learner.py -v
-	@if [ $$? -eq 0 ]; then \
-		$(PYTHON) scripts/connector.py --iteration 6 --status pass; \
-	else \
-		$(PYTHON) scripts/connector.py --iteration 6 --status fail; \
-		exit 1; \
-	fi
+# Which base models, features and signal components actually earn their place.
+# Scored on the backtest window only — never on the holdout.
+ablation:
+	$(THREADS) $(PYTHON) scripts/ablation.py --satellites 6
 
-verify-7:
-	@echo "[make] Verifying Iteration 7: Normalizing Flow"
-	$(PYTEST) tests/test_normalizing_flow.py -v
-	@if [ $$? -eq 0 ]; then \
-		$(PYTHON) scripts/connector.py --iteration 7 --status pass; \
-	else \
-		$(PYTHON) scripts/connector.py --iteration 7 --status fail; \
-		exit 1; \
-	fi
+# ── TESTS ────────────────────────────────────────────────
 
-verify-8:
-	@echo "[make] Verifying Iteration 8: Full Pipeline"
-	$(PYTEST) tests/test_pipeline.py -v
-	$(PYTHON) src/orbitalmind/run_pipeline.py --data $(DATA) --output outputs
-	@if [ $$? -eq 0 ]; then \
-		$(PYTHON) scripts/connector.py --iteration 8 --status pass; \
-	else \
-		$(PYTHON) scripts/connector.py --iteration 8 --status fail; \
-		exit 1; \
-	fi
+test:
+	$(PYTEST) tests/ -n $(WORKERS) --tb=short
 
-# ── FULL REGRESSION ─────────────────────────────────────
+# Skips the files that train real models end to end. Minutes instead of an hour.
+SLOW = --ignore=tests/test_pipeline.py --ignore=tests/test_lstm.py \
+       --ignore=tests/test_tft.py --ignore=tests/test_neural_ode.py \
+       --ignore=tests/test_parallel_determinism.py
 
-test-all:
-	@echo "[make] Running full test suite"
-	$(PYTEST) tests/ -v --tb=short
-	@echo "[make] Done"
+test-fast:
+	$(PYTEST) tests/ -n $(WORKERS) --tb=short $(SLOW)
 
-# ── CHECKER TRIGGER ─────────────────────────────────────
-# Call this after verify passes to request checker review
-
-request-review:
-	@echo "[make] Requesting checker review"
-	@echo "Open a NEW Claude Code session"
-	@echo "Load: .claude/checker/CHECKER.md"
-	@echo "Say: Review iteration $$(grep 'Number:' memory/current_iteration.md | head -1 | awk '{print $$2}') using review_code.md and review_tests.md"
-	@cat memory/current_iteration.md | grep "Number:"
-
-# ── FORMAT ──────────────────────────────────────────────
+# ── HOUSEKEEPING ─────────────────────────────────────────
 
 format:
 	black src/ tests/ scripts/
-	@echo "[make] Formatting complete"
 
 format-check:
 	black --check src/ tests/ scripts/
-	@echo "[make] Format check complete"
-
-# ── CLEAN ────────────────────────────────────────────────
 
 clean:
 	find . -type f -name "*.pyc" -delete
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	@echo "[make] Clean complete"
 
 clean-outputs:
-	rm -rf outputs/
-	mkdir -p outputs/
-	@echo "[make] Outputs cleared"
-
-# ── HELP ─────────────────────────────────────────────────
+	rm -rf outputs/ && mkdir -p outputs/
 
 help:
-	@echo "OrbitalMind Makefile"
+	@echo "OrbitalMind"
 	@echo ""
-	@echo "Setup:        make setup"
-	@echo "Verify iter:  make verify-1  (1 through 8)"
-	@echo "All tests:    make test-all"
-	@echo "Format:       make format"
-	@echo "Checker:      make request-review"
-	@echo "Clean:        make clean"
-
-.PHONY: setup verify-1 verify-2 verify-3 verify-4 verify-5 \
-        verify-6 verify-7 verify-8 test-all request-review \
-        format format-check clean clean-outputs help
-
-# ── RESUME ───────────────────────────────────────────────
-
-resume:
-	@python3 scripts/resume.py
-
-checkpoint:
-	@echo "Usage: make checkpoint ITER=1 FN=function_name STATUS=complete NOTE='description'"
-	@python3 scripts/write_checkpoint.py \
-		--iteration $(ITER) \
-		--function "$(FN)" \
-		--status $(STATUS) \
-		--note "$(NOTE)"
+	@echo "  make setup       create venv and install dependencies"
+	@echo "  make fetch       download 8 days of real GNSS data from NASA CDDIS"
+	@echo "  make run         full pipeline with backtest (~3-4.5 h, 95 satellites)"
+	@echo "  make run-fast    submission only, no backtest (~half the time)"
+	@echo "  make explain SAT=G01   trace one satellite through preprocessing"
+	@echo "  make ablation    measure what each model and feature contributes"
+	@echo "  make test        full test suite"
+	@echo "  make test-fast   test suite without the slow training tests"
+	@echo "  make format      black over src/ tests/ scripts/"
+	@echo "  make clean       remove bytecode caches"
