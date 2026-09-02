@@ -7,8 +7,9 @@ REAL    = data/raw/gnss_real.csv
 SYNTH   = data/synthetic/gnss_synthetic.csv
 WORKERS = 8
 
-# 8 workers beats 15 on a 16-core machine: LightGBM spawns threads of its own,
-# so more workers oversubscribe the cores and lose the gain to context switching.
+# Pin BLAS/OpenMP to one thread per worker. Without this each of the 8 workers
+# spawns its own thread pool onto 16 cores and the suite takes 8x longer -- the
+# same oversubscription that makes 15 pipeline workers slower than 8.
 THREADS = OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 
 .PHONY: setup fetch run run-fast explain ablation test test-fast \
@@ -56,15 +57,15 @@ ablation:
 # ── TESTS ────────────────────────────────────────────────
 
 test:
-	$(PYTEST) tests/ -n $(WORKERS) --tb=short
+	$(THREADS) $(PYTEST) tests/ -n $(WORKERS) --tb=short
 
-# Skips the files that train real models end to end. Minutes instead of an hour.
+# Skips the files that train real models end to end: 126 tests in ~2 min.
 SLOW = --ignore=tests/test_pipeline.py --ignore=tests/test_lstm.py \
        --ignore=tests/test_tft.py --ignore=tests/test_neural_ode.py \
        --ignore=tests/test_parallel_determinism.py
 
 test-fast:
-	$(PYTEST) tests/ -n $(WORKERS) --tb=short $(SLOW)
+	$(THREADS) $(PYTEST) tests/ -n $(WORKERS) --tb=short $(SLOW)
 
 # ── HOUSEKEEPING ─────────────────────────────────────────
 
