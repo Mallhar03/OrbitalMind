@@ -325,3 +325,39 @@ Consequence for how ablation is used: results become PREPARATION, not pruning. I
 Alternatives rejected: dropping the LSTM and Neural ODE on the ablation evidence
         (overruled); deciding on a larger sample first (the instruction is
         unconditional, so more evidence would not change the outcome).
+
+## Decision 021
+Decision: The shaping/calibration lane supplies a predictive interval and the
+          Q-Q diagnostic ONLY. It does not modify the submitted point forecast,
+          and there is no residual transform anywhere in the pipeline.
+Date: 3 September 2026
+Reason: Two facts settle this. (1) At evaluation the team submits PREDICTIONS;
+        the organisers compute the residual as (prediction - hidden truth) and
+        run Shapiro-Francia themselves (Note.pdf 1c-1e). A transform applied to
+        a residual therefore never reaches the scorer — it would only flatter
+        the team's own internal numbers, which is self-deception. (2) The
+        Shapiro-Francia W statistic is invariant to location and scale, so any
+        affine correction to the point forecast is provably W-neutral. Improving
+        W is the forecaster's job (a better point forecast leaves whiter
+        residuals), never the calibrator's.
+        A per-parameter bias correction (gated on a held-out training tail) was
+        built and MEASURED on the shipped day-8 data. It made the priority-2
+        residual mean WORSE on 4 of 5 series (mean |residual mean| 0.36 -> 0.62):
+        a bias fit on the calm training week does not transfer through day-8's
+        regime change, least of all the GEO divergence. Per the anti-clutter
+        rule it did not earn its place and was removed. What remains — a robust
+        (MAD-based) dispersion for the predictive interval, and Q-Q plots — is
+        fit on training only and cannot alter the forecast or W.
+        tests/test_shaping.py pins the guarantee: Calibration exposes no
+        point-altering method, and the entrypoint's submitted point equals the
+        raw model output exactly.
+Measured normality on the shipped day-8 data (leak-free model selection): 3 of 5
+        series pass (H=0); GEO fails because the satellite genuinely diverges at
+        week's end (clock std 2->16 ns across days 6-8), and MEO_Train2-b0 fails
+        on small-sample (n=18) single-outlier fragility. Neither is fixable by
+        any honest post-processing; both are reported as measured outcomes.
+Alternatives rejected: a residual-space whitening transform (never reaches the
+        real submission — self-deception); a Yeo-Johnson target transform,
+        including a leak-free per-series selected variant (measured net-zero on
+        normality across the five series, so clutter); keeping the bias
+        correction (measured to hurt priority-2).
