@@ -13,8 +13,7 @@ generator. Two failures followed from it.
 
 compute_splits derives the windows from the actual series length, so the same
 code is correct for a 7-day file, our 8-day synthetic file, and a 14-day real
-record. All indices are half-open [start, stop) in *differenced* index space,
-which is one shorter than the raw satellite record.
+record. All indices are half-open [start, stop) in index space.
 
 Two plans are produced:
 
@@ -76,7 +75,7 @@ def compute_splits(n: int, seq_len: int = SEQ_LEN, horizon: int = HORIZON) -> Sp
     """
     Derive train/calibration/forecast windows from the actual series length.
 
-    Layout, where n is the differenced series length and h the horizon:
+    Layout, where n is the series length and h the horizon:
 
         backtest    train [0, n-2h)   cal [n-2h, n-h)   target [n-h, n)
         submission  train [0, n-h)    cal [n-h, n)      target [n, n+h)
@@ -86,7 +85,7 @@ def compute_splits(n: int, seq_len: int = SEQ_LEN, horizon: int = HORIZON) -> Sp
     actually requires.
 
     Args:
-        n:       length of the differenced series (raw row count minus one)
+        n:       length of the series (raw row count)
         seq_len: number of history steps fed to the models
         horizon: number of steps to forecast
     Returns:
@@ -97,9 +96,9 @@ def compute_splits(n: int, seq_len: int = SEQ_LEN, horizon: int = HORIZON) -> Sp
     minimum = seq_len + 3 * horizon
     if n < minimum:
         raise ValueError(
-            f"{MIN_LENGTH_MSG}: got {n} differenced steps, need at least "
+            f"{MIN_LENGTH_MSG}: got {n} steps, need at least "
             f"{minimum} (seq_len {seq_len} + 3 x horizon {horizon}). "
-            f"That is {minimum + 1} rows per satellite."
+            f"That is {minimum} rows per satellite."
         )
 
     def plan(train_stop: int, cal_start: int, cal_stop: int,
