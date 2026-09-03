@@ -32,6 +32,7 @@ from orbitalmind.evaluation.scoring import score_residuals
 from orbitalmind.models.harmonic import HarmonicPredictor
 from orbitalmind.models.gp_predictor import GaussianProcessPredictor
 from orbitalmind.models.deep_predictor import DeepResidualPredictor
+from orbitalmind.predict import select_model
 
 # ── Data paths ────────────────────────────────────────────────────────────────
 
@@ -144,20 +145,29 @@ def train_and_rank():
         print(f"{sid:<20} {'DeepResidual':<24} {score_d.W:>8.4f} {score_d.p_value:>8.4f} {score_d.H:>4}  {beats_d:>18}  ({elapsed_d}s)")
 
         # ── Pick best model and save ──────────────────────────────────────
-        candidates = {
-            "Harmonic": (har, score_h.W),
-            "GP": (gp, score_g.W),
-            "DeepResidual": (deep_model, score_d.W),
-        }
-        best_name, (best_model, best_W) = max(candidates.items(), key=lambda x: x[1][1])
+        # LEAK-FREE SELECTION. The winner is chosen on a held-out TAIL OF THE
+        # TRAINING record (see orbitalmind.predict.select_model), never on the
+        # test residuals above. The test W/p/H printed per model stay as an
+        # honest post-hoc measurement, but they must not steer the choice —
+        # at the real evaluation the test answer does not exist yet.
+        fitted = {"Harmonic": har, "GP": gp, "DeepResidual": deep_model}
+        sel_name, val_W = select_model(train)
+        # select_model uses short names ("Deep"); map to this script's labels.
+        sel_label = {"Harmonic": "Harmonic", "GP": "GP", "Deep": "DeepResidual"}[sel_name]
+        best_name, best_model = sel_label, fitted[sel_label]
+        # Report BOTH: the selection score (leak-free) and this model's test W.
+        test_W_of_choice = {"Harmonic": score_h.W, "GP": score_g.W,
+                            "DeepResidual": score_d.W}[sel_label]
         results_for_sid["best"] = best_name
-        results_for_sid["best_W"] = best_W
+        results_for_sid["best_W"] = test_W_of_choice           # test W, informational
+        results_for_sid["selection_val_W"] = val_W             # leak-free score that chose it
 
         save_path = f"models/saved/best_{sid}.pkl"
         with open(save_path, "wb") as f:
             pickle.dump(best_model, f)
 
-        print(f"  → Best: {best_name} (W={best_W:.4f}) saved to {save_path}\n")
+        print(f"  → Selected (leak-free, val_W={val_W:.4f}): {best_name}"
+              f" | its test W={test_W_of_choice:.4f} → {save_path}\n")
 
         all_results[sid] = results_for_sid
 
