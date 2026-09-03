@@ -210,3 +210,5 @@ which prefers CUDA, then Apple MPS, then CPU.
 
 * `docs/DECISIONS.md` — every architecture decision, its reason, and the
   alternatives rejected. Read before changing a modelling choice.
+* `pid_phy.md` — physical proofs and reasoning linking orbital mechanics, PID clock steering, and the Neural ODE model.
+* `documentation.md` — ongoing project troubleshooting and environment fixes.

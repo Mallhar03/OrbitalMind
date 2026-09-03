@@ -33,7 +33,7 @@ def generate_synthetic_gnss_data(
 
     Returns:
         DataFrame with columns:
-        [Timestamp, SatelliteID, OrbitType, ClockError_ns, EphemerisError_m]
+        [Timestamp, SatelliteID, OrbitType, x_error (m), y_error (m), z_error (m), satclockerror (m)]
     """
     np.random.seed(seed)
 
@@ -78,8 +78,10 @@ def generate_synthetic_gnss_data(
                 "Timestamp": timestamps[k],
                 "SatelliteID": sat_id,
                 "OrbitType": "GEO",
-                "ClockError_ns": clock[k],
-                "EphemerisError_m": eph[k],
+                "satclockerror (m)": clock[k],
+                "x_error (m)": eph[k],
+                "y_error (m)": eph[k] * 0.9,
+                "z_error (m)": eph[k] * 1.1,
             })
 
     for i in range(1, n_meo + 1):
@@ -116,8 +118,10 @@ def generate_synthetic_gnss_data(
                 "Timestamp": timestamps[k],
                 "SatelliteID": sat_id,
                 "OrbitType": "MEO",
-                "ClockError_ns": clock[k],
-                "EphemerisError_m": eph[k],
+                "satclockerror (m)": clock[k],
+                "x_error (m)": eph[k],
+                "y_error (m)": eph[k] * 0.9,
+                "z_error (m)": eph[k] * 1.1,
             })
 
     df = pd.DataFrame(rows)

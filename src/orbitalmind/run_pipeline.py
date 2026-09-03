@@ -51,7 +51,7 @@ from orbitalmind.models.normalizing_flow import (
 from orbitalmind.models.base_trainer import compute_rmse_horizons
 from orbitalmind.evaluation.gaussian_check import save_qq_plot
 
-ERROR_COLUMNS = ["ClockError_ns", "EphemerisError_m"]
+ERROR_COLUMNS = ["x_error (m)", "y_error (m)", "z_error (m)", "satclockerror (m)"]
 CONFIDENCE    = 0.95
 
 
@@ -146,48 +146,40 @@ def _slice(arr: np.ndarray, window: tuple) -> np.ndarray:
     return arr[window[0]:window[1]]
 
 
-def _reconstruct(anchor: float, diff_preds: np.ndarray) -> np.ndarray:
+def _reconstruct(slope: float, intercept: float, t_indices: np.ndarray, detrended_preds: np.ndarray) -> np.ndarray:
     """
-    Undo the single difference to recover original-scale values.
-
-    The differenced series satisfies combined[i] ~= cleaned[i+1] - cleaned[i],
-    so a forecast of combined[t0 : t0+h] reconstructs to cleaned[t0+1 : t0+h+1]
-    given the anchor cleaned[t0].
-
-    The previous code passed cleaned[0] — the first sample of the whole record —
-    as the anchor for a day-8 forecast, so every prediction was offset by the
-    entire drift accumulated since day 1 (hundreds of ns on real GPS data).
+    Undo the linear detrending to recover original-scale values.
 
     Args:
-        anchor:     last observed original-scale value before the window
-        diff_preds: (h,) forecast in differenced space
+        slope:           linear trend slope
+        intercept:       linear trend intercept
+        t_indices:       time indices of the target window
+        detrended_preds: (h,) forecast in detrended space
     Returns:
         (h,) reconstructed original-scale values.
     """
-    return float(anchor) + np.cumsum(np.asarray(diff_preds, dtype=np.float64))
+    line = slope * t_indices + intercept
+    return detrended_preds + line
 
 
 def _accumulated_bounds(
     point_orig: np.ndarray, lo_step: float, hi_step: float, sigma_step: float
 ) -> tuple:
     """
-    Propagate per-step residual spread through the cumulative sum.
+    Propagate interval bounds for detrended predictions.
 
-    Because the reconstruction sums k differenced predictions, and the residual
-    on each step is modelled as independent, the spread at step k grows as
-    sqrt(k). The interval therefore widens with horizon, which is what an
-    accumulating clock-drift error actually does.
+    Since we no longer accumulate step differences, the variance does not artificially
+    explode with sqrt(k). Uncertainty bounds are modelled directly by the flow.
 
     Args:
         point_orig: (h,) reconstructed point forecast
-        lo_step:    lower residual quantile per differenced step
-        hi_step:    upper residual quantile per differenced step
-        sigma_step: residual standard deviation per differenced step
+        lo_step:    lower residual quantile
+        hi_step:    upper residual quantile
+        sigma_step: residual standard deviation
     Returns:
         (lower, upper, sigma) each (h,) in original units.
     """
-    k = np.sqrt(np.arange(1, len(point_orig) + 1, dtype=np.float64))
-    return point_orig + lo_step * k, point_orig + hi_step * k, sigma_step * k
+    return point_orig + lo_step, point_orig + hi_step, np.full_like(point_orig, sigma_step)
 
 
 
@@ -229,7 +221,7 @@ def _meta_features(combined: np.ndarray, lo: int, hi: int, input_hi: int) -> dic
 
 
 def _run_plan(combined: np.ndarray, cleaned: np.ndarray, plan,
-              orbit_type: str, error_col: str,
+              orbit_type: str, error_col: str, slope: float, intercept: float,
               model_tag: str | None = None,
               use_features: bool = False) -> dict:
     """
@@ -285,7 +277,8 @@ def _run_plan(combined: np.ndarray, cleaned: np.ndarray, plan,
     lo_step, hi_step, sigma_step = predictive_interval(
         calibration, np.zeros(1), level=CONFIDENCE
     )
-    point_orig = _reconstruct(cleaned[plan.target[0]], point_diff)
+    t_target = np.arange(plan.target[0], plan.target[1], dtype=np.float64)
+    point_orig = _reconstruct(slope, intercept, t_target, point_diff)
 
     # ── Calibration-based selection ────────────────────────────────────────
     # The ensemble beats a linear extrapolation on the clock but loses to it on
@@ -300,10 +293,10 @@ def _run_plan(combined: np.ndarray, cleaned: np.ndarray, plan,
     if os.environ.get("ORBITALMIND_SELECT", "").strip() == "1":
         cal_pred_diff = apply_normalizing_flow(
             calibration, predict_meta_learner(meta, cal_outputs))
-        cal_anchor = cleaned[plan.cal[0]]
-        cal_pred   = _reconstruct(cal_anchor, cal_pred_diff)
-        cal_actual = cleaned[plan.cal[0] + 1: plan.cal[1] + 1]
-        cal_hist   = cleaned[max(0, plan.cal[0] - SEQ_LEN + 1): plan.cal[0] + 1]
+        t_cal = np.arange(plan.cal[0], plan.cal[1], dtype=np.float64)
+        cal_pred   = _reconstruct(slope, intercept, t_cal, cal_pred_diff)
+        cal_actual = cleaned[plan.cal[0]: plan.cal[1]]
+        cal_hist   = cleaned[max(0, plan.cal[0] - SEQ_LEN): plan.cal[0]]
         cal_lin    = _linear_baseline(cal_hist, cal_anchor, len(cal_actual))
 
         n = min(len(cal_actual), len(cal_pred), len(cal_lin))
@@ -433,7 +426,7 @@ def _process_satellite(task: tuple) -> dict:
             anchor = cleaned[splits.backtest.target[0]]
             try:
                 bt = _run_plan(combined, cleaned, splits.backtest,
-                               orbit_type, error_col, model_tag=sat_id,
+                               orbit_type, error_col, pre["slope"], pre["intercept"], model_tag=sat_id,
                                use_features=use_features)
                 out["all_rmse"][key] = compute_rmse_horizons(truth, bt["point"])
                 resid = truth - bt["point"]
@@ -452,34 +445,33 @@ def _process_satellite(task: tuple) -> dict:
 
         try:
             forecasts[error_col] = _run_plan(combined, cleaned, splits.submission,
-                                             orbit_type, error_col, model_tag=sat_id,
+                                             orbit_type, error_col, pre["slope"], pre["intercept"], model_tag=sat_id,
                                              use_features=use_features)
         except Exception as exc:
             out["fallbacks"].append(f"{key} (forecast): {exc} — using persistence")
             forecasts[error_col] = _persistence(cleaned[-1], HORIZON)
 
-    clock, eph = forecasts["ClockError_ns"], forecasts["EphemerisError_m"]
     for step in range(1, HORIZON + 1):
         i = step - 1
-        out["rows"].append({
-            "SatelliteID":                sat_id,
-            "PredictionStep":             step,
-            "HorizonMinutes":             step * 15,
-            "ClockError_ns_predicted":    float(clock["point"][i]),
-            "ClockError_ns_sigma":        float(clock["sigma"][i]),
-            "ClockError_ns_lower95":      float(clock["lower"][i]),
-            "ClockError_ns_upper95":      float(clock["upper"][i]),
-            "EphemerisError_m_predicted": float(eph["point"][i]),
-            "EphemerisError_m_sigma":     float(eph["sigma"][i]),
-            "EphemerisError_m_lower95":   float(eph["lower"][i]),
-            "EphemerisError_m_upper95":   float(eph["upper"][i]),
-        })
+        row = {
+            "SatelliteID":    sat_id,
+            "PredictionStep": step,
+            "HorizonMinutes": step * 15,
+        }
+        for col in ERROR_COLUMNS:
+            clean_col = col.replace(" (m)", "")
+            row[f"{clean_col}_predicted"] = float(forecasts[col]["point"][i])
+            row[f"{clean_col}_sigma"]     = float(forecasts[col]["sigma"][i])
+            row[f"{clean_col}_lower95"]   = float(forecasts[col]["lower"][i])
+            row[f"{clean_col}_upper95"]   = float(forecasts[col]["upper"][i])
+        out["rows"].append(row)
     return out
 
 
 def run_pipeline(data_path: str, output_dir: str = "outputs",
                  backtest: bool = True, max_satellites: int = 0,
-                 workers: int = 1, use_features: bool = False) -> dict:
+                 workers: int = 1, use_features: bool = False,
+                 test_data_path: str = None) -> dict:
     """
     Run the full OrbitalMind pipeline end to end.
 
@@ -511,6 +503,14 @@ def run_pipeline(data_path: str, output_dir: str = "outputs",
 
     print("[1/6] Loading data...")
     df = pd.read_csv(data_path)
+    
+    if "utc_time" in df.columns:
+        df.rename(columns={"utc_time": "Timestamp"}, inplace=True)
+    if "SatelliteID" not in df.columns:
+        df["SatelliteID"] = "GEO" if "GEO" in data_path.upper() else "MEO"
+    if "OrbitType" not in df.columns:
+        df["OrbitType"] = "GEO" if "GEO" in data_path.upper() else "MEO"
+
     missing = {"Timestamp", "SatelliteID", "OrbitType", *ERROR_COLUMNS} - set(df.columns)
     if missing:
         raise ValueError(f"input CSV missing required columns: {sorted(missing)}")
@@ -525,7 +525,8 @@ def run_pipeline(data_path: str, output_dir: str = "outputs",
 
     print(f"[2/6] Running ensemble per satellite ({workers} worker(s), "
           f"features {'ON' if use_features else 'OFF'})...")
-    tasks = [(sat_id, df[df["SatelliteID"] == sat_id].copy(), backtest, use_features)
+    run_backtest = False if test_data_path else backtest
+    tasks = [(sat_id, df[df["SatelliteID"] == sat_id].copy(), run_backtest, use_features)
              for sat_id in satellites]
 
     results = []
@@ -574,42 +575,103 @@ def run_pipeline(data_path: str, output_dir: str = "outputs",
     sub.to_csv(f"{output_dir}/submission.csv", index=False)
     print(f"      {len(rows)} rows ({len(satellites)} satellites x {HORIZON} steps).")
 
-    print("[4/6] Writing evaluation_report.txt...")
-    _write_report(f"{output_dir}/evaluation_report.txt", all_rmse,
-                  baseline_rmse, linear_rmse, fallbacks, backtest)
-
-    print("[5/6] Shapiro-Wilk on held-out residuals...")
-    pooled = np.concatenate(residual_pool) if residual_pool else np.array([])
-    stat, p, verdict = shapiro_wilk(pooled) if len(pooled) else (0.0, 0.0, "FAIL")
-    with open(f"{output_dir}/shapiro_wilk_result.txt", "w") as fh:
-        fh.write("Shapiro-Wilk Normality Test\n")
-        fh.write("Measured on standardised residuals from the held-out backtest\n")
-        fh.write("day, pooled across satellites. Nothing in the training or\n")
-        fh.write("calibration path saw this window.\n\n")
-        # shapiro_wilk() caps its input at 5000 points, so reporting the pool
-        # size here overstated the sample the statistic was computed on: it said
-        # 18,240 when the test saw 5,000. A judge doing the arithmetic would
-        # catch it. Report both numbers.
-        n_tested = min(len(pooled), 5000)
-        fh.write(f"Samples:   {n_tested} tested"
-                 f"{f' (of {len(pooled)} pooled; scipy.shapiro is capped at 5000)' if len(pooled) > n_tested else ''}\n")
-        fh.write(f"Statistic: {stat:.6f}\n")
-        fh.write(f"p-value:   {p:.6f}\n")
-        fh.write(f"Result:    {verdict}\n")
-
-    print("[6/6] Saving plots...")
-    if len(pooled):
-        save_qq_plot(pooled, path=f"{output_dir}/qq_plot.png")
-        _save_histogram(pooled, f"{output_dir}/residual_histogram.png")
-
-    print(f"Done. Shapiro-Wilk {verdict} (p={p:.4f}); {len(fallbacks)} fallbacks.")
-    return {
-        "rmse_ns":             all_rmse,
-        "baseline_rmse_ns":    baseline_rmse,
-        "shapiro_wilk_p":      float(p),
-        "shapiro_wilk_result": verdict,
-        "fallbacks":           fallbacks,
-    }
+    if test_data_path:
+        print("[4/6] Evaluating against SIH Test Data...")
+        test_df = pd.read_csv(test_data_path)
+        if "utc_time" in test_df.columns:
+            test_df.rename(columns={"utc_time": "Timestamp"}, inplace=True)
+        if "SatelliteID" not in test_df.columns:
+            test_df["SatelliteID"] = "GEO" if "GEO" in test_data_path.upper() else "MEO"
+        test_df["Timestamp"] = pd.to_datetime(test_df["Timestamp"], format="mixed")
+        
+        param_residuals = {col: [] for col in ERROR_COLUMNS}
+        
+        for sat_id in test_df["SatelliteID"].unique():
+            sat_test = test_df[test_df["SatelliteID"] == sat_id].copy()
+            sat_sub = sub[sub["SatelliteID"] == sat_id].copy()
+            if sat_sub.empty:
+                continue
+                
+            sat_sub.set_index("Timestamp", inplace=True)
+            sat_test.set_index("Timestamp", inplace=True)
+            
+            for col in ERROR_COLUMNS:
+                clean_col = col.replace(" (m)", "")
+                pred_col = f"{clean_col}_predicted"
+                pred_series = sat_sub[pred_col]
+                
+                combined_idx = pred_series.index.union(sat_test.index).sort_values()
+                anchor_ts = pd.to_datetime(df[df["SatelliteID"] == sat_id]["Timestamp"].max())
+                if anchor_ts not in combined_idx:
+                     combined_idx = combined_idx.insert(0, anchor_ts)
+                
+                interpolated = pred_series.reindex(combined_idx).interpolate(method="time")
+                test_preds = interpolated.loc[sat_test.index]
+                residuals = sat_test[col] - test_preds
+                param_residuals[col].extend(residuals.dropna().values)
+                
+        sw_stats, p_values = [], []
+        with open(f"{output_dir}/sih_evaluation_report.txt", "w") as fh:
+            fh.write("SIH Final Evaluation Report\n===========================\n\n")
+            
+            for col, resids in param_residuals.items():
+                arr = np.array(resids)
+                if len(arr) > 0:
+                    stat, p, _ = shapiro_wilk(arr)
+                    sw_stats.append(stat)
+                    p_values.append(p)
+                    fh.write(f"Parameter: {col}\n")
+                    fh.write(f"  SW W-stat: {stat:.6f}\n")
+                    fh.write(f"  p-value:   {p:.6f}\n")
+                    fh.write(f"  Mean Res:  {np.mean(arr):.6f} m\n")
+                    fh.write(f"  Std Res:   {np.std(arr):.6f} m\n\n")
+                    save_qq_plot(arr, path=f"{output_dir}/qq_plot_{col.replace(' (m)', '')}.png")
+                    
+            avg_w = np.mean(sw_stats) if sw_stats else 0
+            avg_p = np.mean(p_values) if p_values else 0
+            fh.write("FINAL SCORES (Averaged)\n-----------------------\n")
+            fh.write(f"Priority 1 - Avg SW W-statistic: {avg_w:.6f} (Target: 0.9810)\n")
+            fh.write(f"Priority 1 - Avg p-value:        {avg_p:.6f}\n")
+            fh.write(f"Priority 1 - Hypothesis Test:    {0 if avg_p > 0.05 else 1}\n")
+        print(f"      SIH Evaluation completed. Avg SW: {avg_w:.6f}")
+        return {
+            "rmse_ns":             all_rmse,
+            "baseline_rmse_ns":    baseline_rmse,
+            "fallbacks":           fallbacks,
+        }
+    else:
+        print("[4/6] Writing evaluation_report.txt...")
+        _write_report(f"{output_dir}/evaluation_report.txt", all_rmse,
+                      baseline_rmse, linear_rmse, fallbacks, backtest)
+    
+        print("[5/6] Shapiro-Wilk on held-out residuals...")
+        pooled = np.concatenate(residual_pool) if residual_pool else np.array([])
+        stat, p, verdict = shapiro_wilk(pooled) if len(pooled) else (0.0, 0.0, "FAIL")
+        with open(f"{output_dir}/shapiro_wilk_result.txt", "w") as fh:
+            fh.write("Shapiro-Wilk Normality Test\n")
+            fh.write("Measured on standardised residuals from the held-out backtest\n")
+            fh.write("day, pooled across satellites. Nothing in the training or\n")
+            fh.write("calibration path saw this window.\n\n")
+            n_tested = min(len(pooled), 5000)
+            fh.write(f"Samples:   {n_tested} tested"
+                     f"{f' (of {len(pooled)} pooled; scipy.shapiro is capped at 5000)' if len(pooled) > n_tested else ''}\n")
+            fh.write(f"Statistic: {stat:.6f}\n")
+            fh.write(f"p-value:   {p:.6f}\n")
+            fh.write(f"Result:    {verdict}\n")
+    
+        print("[6/6] Saving plots...")
+        if len(pooled):
+            save_qq_plot(pooled, path=f"{output_dir}/qq_plot.png")
+            _save_histogram(pooled, f"{output_dir}/residual_histogram.png")
+    
+        print(f"Done. Shapiro-Wilk {verdict} (p={p:.4f}); {len(fallbacks)} fallbacks.")
+        return {
+            "rmse_ns":             all_rmse,
+            "baseline_rmse_ns":    baseline_rmse,
+            "shapiro_wilk_p":      float(p),
+            "shapiro_wilk_result": verdict,
+            "fallbacks":           fallbacks,
+        }
 
 
 def _write_report(path: str, all_rmse: dict, baseline_rmse: dict,
@@ -687,7 +749,7 @@ def _save_histogram(residuals: np.ndarray, path: str) -> None:
     plt.close(fig)
 
 
-def explain_satellite(data_path: str, sat_id: str, error_col: str = "ClockError_ns") -> None:
+def explain_satellite(data_path: str, sat_id: str, error_col: str = "satclockerror (m)") -> None:
     """
     Print the preprocessing chain stage by stage, with before/after numbers.
 
@@ -702,7 +764,7 @@ def explain_satellite(data_path: str, sat_id: str, error_col: str = "ClockError_
     """
     from orbitalmind.preprocessing.outlier_removal import remove_outliers_mad
     from orbitalmind.preprocessing.iod_correction import correct_iod_jumps, count_jumps
-    from orbitalmind.preprocessing.differencing import single_difference
+    from orbitalmind.preprocessing.detrending import detrend_signal
     from orbitalmind.preprocessing.decomposition import decompose_signal
 
     df = pd.read_csv(data_path)
@@ -747,15 +809,15 @@ def explain_satellite(data_path: str, sat_id: str, error_col: str = "ClockError_
     print("         NOTE reconstruction anchors on STAGE 1, not this series —")
     print("              this one sits in a shifted frame whenever a jump was removed\n")
 
-    differenced, first_value = single_difference(cleaned)
-    print("STAGE 3  single differencing  (makes the drifting series stationary)")
-    print(f"         {stats(differenced)}")
-    print(f"         first_value stored for reconstruction: {first_value:+.4f} {unit}\n")
+    detrended, slope, intercept = detrend_signal(cleaned)
+    print("STAGE 3  linear detrending  (makes the drifting series stationary)")
+    print(f"         {stats(detrended)}")
+    print(f"         slope: {slope:+.4f} {unit}/step, intercept: {intercept:+.4f} {unit}\n")
 
-    trend, periodic, noise = decompose_signal(differenced.values.astype(float))
+    trend, periodic, noise = decompose_signal(detrended.values.astype(float))
     total = np.var(trend) + np.var(periodic) + np.var(noise)
     recon_err = float(np.max(np.abs((trend + periodic + noise)
-                                    - differenced.values.astype(float))))
+                                    - detrended.values.astype(float))))
     print("STAGE 4  EMD decomposition  (EMD not EWT — see decisions.md 001)")
     for name, comp in (("trend", trend), ("periodic", periodic), ("noise", noise)):
         print(f"         {name:9s} {stats(comp)}  "
@@ -780,8 +842,8 @@ if __name__ == "__main__":
                         help="Trace the preprocessing chain for one satellite "
                              "(e.g. --explain G01) and exit, without running "
                              "the pipeline")
-    parser.add_argument("--explain-column", default="ClockError_ns",
-                        choices=["ClockError_ns", "EphemerisError_m"],
+    parser.add_argument("--explain-column", default="satclockerror (m)",
+                        choices=ERROR_COLUMNS,
                         help="Which error column --explain traces")
     parser.add_argument("--features", action="store_true",
                         help="Feed engineered features (24h and 12h periodic "
@@ -794,6 +856,8 @@ if __name__ == "__main__":
                              "Results are identical for any worker count.")
     parser.add_argument("--max-satellites", type=int, default=0,
                         help="Process only the first N satellites (smoke testing)")
+    parser.add_argument("--test-data", type=str, default=None,
+                        help="Path to SIH Test dataset to evaluate against arbitrary timestamps.")
     args = parser.parse_args()
     if args.explain:
         explain_satellite(args.data, args.explain, args.explain_column)
@@ -804,4 +868,5 @@ if __name__ == "__main__":
                  backtest=not args.no_backtest,
                  max_satellites=args.max_satellites,
                  workers=n_workers,
-                 use_features=args.features)
+                 use_features=args.features,
+                 test_data_path=args.test_data)

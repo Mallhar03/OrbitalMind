@@ -68,6 +68,8 @@ amplifying structure remains and is the main open problem.
 Decisions behind the design, and the alternatives rejected, are in
 [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
+For an in-depth exploration of how orbital mechanics, PID clock steering, and Neural ODEs intersect to form these errors, see [`pid_phy.md`](pid_phy.md).
+
 ---
 
 **New here? Read [ARCHITECTURE.md](ARCHITECTURE.md) first.** It explains the
@@ -125,6 +127,8 @@ products, archive, date spans, counts and error definitions, with
 dataset actually is.
 
 ### Troubleshooting
+
+*Note: For a detailed log of environment setups, module resolution fixes (e.g. `PyEMD`), and data generation bugs, refer to [`documentation.md`](documentation.md).*
 
 | Symptom | Cause |
 |---------|-------|
