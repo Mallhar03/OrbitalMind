@@ -19,11 +19,11 @@ from orbitalmind.models.base_trainer import compute_rmse_horizons
 @pytest.fixture(scope="module")
 def trained_lstm():
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
+    preprocessed = preprocess_satellite(df, 'GEO-01', 'satclockerror (m)')
     data = preprocessed['trend'] + preprocessed['periodic']
     # train_lstm fits exactly what it is handed; the caller owns the window,
     # so data[480:576] below stays genuinely out-of-sample.
-    model, metrics = train_lstm(data[:480], 'GEO', 'ClockError_ns')
+    model, metrics = train_lstm(data[:480], 'GEO', 'satclockerror (m)')
     return model, metrics, data
 
 
@@ -61,15 +61,15 @@ def test_lstm_rmse_1hr(trained_lstm):
 
 
 def test_lstm_model_saved():
-    assert os.path.exists("models/saved/lstm_GEO_ClockError_ns.pt"), \
+    assert os.path.exists("models/saved/lstm_GEO_satclockerror (m).pt"), \
         "LSTM model not saved"
 
 
 def test_tcn_lstm_prediction_shape():
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'MEO-01', 'ClockError_ns')
+    preprocessed = preprocess_satellite(df, 'MEO-01', 'satclockerror (m)')
     data  = preprocessed['trend'] + preprocessed['periodic']
-    model, _ = train_tcn_lstm(data, 'MEO', 'ClockError_ns')
+    model, _ = train_tcn_lstm(data, 'MEO', 'satclockerror (m)')
     preds = predict_tcn_lstm(model, data[-96:])
     assert preds.shape == (96,), f"TCN-LSTM prediction shape wrong: {preds.shape}"
 

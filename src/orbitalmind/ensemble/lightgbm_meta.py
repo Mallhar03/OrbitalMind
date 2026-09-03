@@ -1,27 +1,31 @@
 """
-LightGBM stacking meta-learner that fuses LSTM, TCN-LSTM, TFT, and Neural ODE outputs
-into a single optimal prediction.
+Linear stacking meta-learner that fuses LSTM, TCN-LSTM, TFT, and Neural ODE outputs
+into a single optimal smooth prediction (avoids decision tree step artifacts).
 """
 import os
+import pickle
 import numpy as np
-import lightgbm as lgb
+from sklearn.linear_model import Ridge
 
 from orbitalmind.paths import models_dir
 
 SAVE_DIR = models_dir()
 
-_LGB_PARAMS = {
-    "objective":        "regression",
-    "metric":           "rmse",
-    "num_leaves":       15,
-    "learning_rate":    0.05,
-    "feature_fraction": 0.9,
-    "bagging_fraction": 0.8,
-    "bagging_freq":     5,
-    "verbose":          -1,
-    "seed":             42,
-}
-_NUM_ROUNDS = 200
+
+class RidgeWrapper:
+    """Wrapper to make Ridge behave like lgb.Booster for our pipeline."""
+    def __init__(self, model: Ridge, feature_name: list):
+        self.model = model
+        self._feature_name = feature_name
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        return self.model.predict(X)
+
+    def feature_name(self) -> list:
+        return self._feature_name
+
+    def feature_importance(self, importance_type="gain") -> np.ndarray:
+        return np.abs(self.model.coef_)
 
 
 def _stack(model_outputs: dict, feature_order: list) -> np.ndarray:
@@ -36,44 +40,45 @@ def train_meta_learner(
     y_true: np.ndarray,
     orbit_type: str = "GEO",
     error_col: str = "ClockError_ns",
-) -> lgb.Booster:
+) -> RidgeWrapper:
     """
-    Train a LightGBM stacking model on base model predictions.
+    Train a Ridge stacking model on base model predictions.
 
     Trains on all available samples (no val split) to maximise in-sample fit.
     Four base-model predictions are the features; actual values are the target.
 
     Args:
         model_outputs: dict mapping model name → (n,) prediction array.
-                       Required keys: lstm, tcn_lstm, tft, neural_ode.
-        y_true: (n,) array of actual target values for the same time range.
-        orbit_type: used for the saved model filename (default 'GEO').
-        error_col:  used for the saved model filename (default 'ClockError_ns').
+        y_true: (n,) array of actual target values.
+        orbit_type: used for the saved model filename.
+        error_col:  used for the saved model filename.
     Returns:
-        Trained lgb.Booster with feature names stored internally.
+        Trained RidgeWrapper.
     """
     feature_order = list(model_outputs.keys())
     X = _stack(model_outputs, feature_order)
     y = np.asarray(y_true, dtype=np.float64)
 
-    train_set = lgb.Dataset(X, y, feature_name=feature_order)
-    model = lgb.train(_LGB_PARAMS, train_set, num_boost_round=_NUM_ROUNDS)
+    model = Ridge(alpha=1.0)
+    model.fit(X, y)
 
     os.makedirs(SAVE_DIR, exist_ok=True)
-    model.save_model(f"{SAVE_DIR}/meta_learner_{orbit_type}_{error_col}.txt")
+    wrapper = RidgeWrapper(model, feature_order)
+    with open(f"{SAVE_DIR}/meta_learner_{orbit_type}_{error_col}.pkl", "wb") as f:
+        pickle.dump(wrapper, f)
 
-    return model
+    return wrapper
 
 
 def predict_meta_learner(
-    model: lgb.Booster,
+    model: RidgeWrapper,
     model_outputs: dict,
 ) -> np.ndarray:
     """
     Generate ensemble predictions using the trained meta-learner.
 
     Args:
-        model: trained lgb.Booster from train_meta_learner
+        model: trained RidgeWrapper from train_meta_learner
         model_outputs: dict mapping model name → (n,) prediction array
     Returns:
         np.ndarray of shape (n,) — fused predictions.
@@ -83,17 +88,17 @@ def predict_meta_learner(
     return model.predict(X)
 
 
-def get_feature_importance(model: lgb.Booster, feature_names: list) -> dict:
+def get_feature_importance(model: RidgeWrapper, feature_names: list) -> dict:
     """
-    Return the gain-based feature importance for each base model.
+    Return the absolute coefficient-based feature importance for each base model.
 
     Args:
-        model: trained lgb.Booster
+        model: trained RidgeWrapper
         feature_names: list of model names in the same order as training features
     Returns:
         Dict mapping model name → importance score (float).
     """
-    importance = model.feature_importance(importance_type="gain")
+    importance = model.feature_importance()
     model_names = model.feature_name()
     imp_map = dict(zip(model_names, importance.tolist()))
     return {name: imp_map.get(name, 0.0) for name in feature_names}
