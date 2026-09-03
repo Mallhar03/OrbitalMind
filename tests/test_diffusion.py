@@ -18,9 +18,9 @@ from orbitalmind.models.diffusion import train_diffusion, sample_residuals
 def compute_residuals_array(n_windows=20):
     """Build a real residuals array from LSTM predictions."""
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
+    preprocessed = preprocess_satellite(df, 'GEO-01', 'satclockerror (m)')
     data = preprocessed['trend'] + preprocessed['periodic']
-    model, _ = train_lstm(data, 'GEO', 'ClockError_ns')
+    model, _ = train_lstm(data, 'GEO', 'satclockerror (m)')
 
     residuals = []
     for i in range(n_windows):
@@ -96,9 +96,9 @@ def test_diffusion_input_shape_validated():
 
 def test_diffusion_ephemeris_residuals_also_work():
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'GEO-01', 'EphemerisError_m')
+    preprocessed = preprocess_satellite(df, 'GEO-01', 'x_error (m)')
     data = preprocessed['trend'] + preprocessed['periodic']
-    model, _ = train_lstm(data, 'GEO', 'EphemerisError_m')
+    model, _ = train_lstm(data, 'GEO', 'x_error (m)')
     residuals = []
     for i in range(10):
         start = i * 24

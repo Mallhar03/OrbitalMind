@@ -19,18 +19,18 @@ from orbitalmind.models.base_trainer import compute_rmse_horizons
 @pytest.fixture(scope="module")
 def trained_node_geo():
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
+    preprocessed = preprocess_satellite(df, 'GEO-01', 'satclockerror (m)')
     data = preprocessed['trend'] + preprocessed['periodic']
-    model, metrics = train_neural_ode(data[:480], 'GEO', 'ClockError_ns')
+    model, metrics = train_neural_ode(data[:480], 'GEO', 'satclockerror (m)')
     return model, metrics, data
 
 
 @pytest.fixture(scope="module")
 def trained_node_meo():
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'MEO-01', 'ClockError_ns')
+    preprocessed = preprocess_satellite(df, 'MEO-01', 'satclockerror (m)')
     data = preprocessed['trend'] + preprocessed['periodic']
-    model, metrics = train_neural_ode(data[:480], 'MEO', 'ClockError_ns')
+    model, metrics = train_neural_ode(data[:480], 'MEO', 'satclockerror (m)')
     return model, metrics, data
 
 
@@ -118,15 +118,15 @@ def test_neural_ode_geo_meo_separate(trained_node_geo, trained_node_meo):
 
 
 def test_neural_ode_model_saved():
-    assert os.path.exists("models/saved/neural_ode_GEO_ClockError_ns.pt"), \
+    assert os.path.exists("models/saved/neural_ode_GEO_satclockerror_m.pt"), \
         "Neural ODE GEO model not saved to models/saved/"
 
 
 def test_neural_ode_ephemeris_also_trains():
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'GEO-01', 'EphemerisError_m')
+    preprocessed = preprocess_satellite(df, 'GEO-01', 'x_error (m)')
     data = preprocessed['trend'] + preprocessed['periodic']
-    model, metrics = train_neural_ode(data, 'GEO', 'EphemerisError_m')
+    model, metrics = train_neural_ode(data, 'GEO', 'x_error (m)')
     preds = predict_neural_ode(model, data[-96:])
     assert preds.shape == (96,)
     assert not np.any(np.isnan(preds))

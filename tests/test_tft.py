@@ -19,19 +19,19 @@ from orbitalmind.models.base_trainer import compute_rmse_horizons
 @pytest.fixture(scope="module")
 def tft_setup():
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
+    preprocessed = preprocess_satellite(df, 'GEO-01', 'satclockerror (m)')
     data = preprocessed['trend'] + preprocessed['periodic']
     tft_df = prepare_tft_dataframe(preprocessed).iloc[:480].reset_index(drop=True)
-    model, metrics = train_tft(tft_df, 'GEO', 'ClockError_ns')
+    model, metrics = train_tft(tft_df, 'GEO', 'satclockerror (m)')
     return model, metrics, data, tft_df
 
 
 @pytest.fixture(scope="module")
 def lstm_24hr_rmse():
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
+    preprocessed = preprocess_satellite(df, 'GEO-01', 'satclockerror (m)')
     data = preprocessed['trend'] + preprocessed['periodic']
-    model, _ = train_lstm(data[:480], 'GEO', 'ClockError_ns')
+    model, _ = train_lstm(data[:480], 'GEO', 'satclockerror (m)')
     val_data = data[480:576]
     preds = predict_lstm(model, data[480-96:480], n_steps=96)
     rmse = compute_rmse_horizons(val_data, preds)
@@ -68,15 +68,15 @@ def test_tft_prediction_not_nan(tft_setup):
 
 
 def test_tft_model_saved():
-    assert os.path.exists("models/saved/tft_GEO_ClockError_ns.ckpt"), \
+    assert os.path.exists("models/saved/tft_GEO_satclockerror_m.ckpt"), \
         "TFT checkpoint not saved"
 
 
 def test_tft_meo_trains_separately():
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'MEO-01', 'ClockError_ns')
+    preprocessed = preprocess_satellite(df, 'MEO-01', 'satclockerror (m)')
     tft_df = prepare_tft_dataframe(preprocessed).iloc[:480].reset_index(drop=True)
-    model, metrics = train_tft(tft_df, 'MEO', 'ClockError_ns')
+    model, metrics = train_tft(tft_df, 'MEO', 'satclockerror (m)')
     assert model is not None
 
 

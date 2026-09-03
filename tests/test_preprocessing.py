@@ -20,13 +20,13 @@ REQUIRED_KEYS = ['sat_id', 'error_col', 'trend', 'periodic', 'noise',
 @pytest.fixture(scope="module")
 def sample_preprocessed():
     df = generate_synthetic_gnss_data(seed=42)
-    return preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
+    return preprocess_satellite(df, 'GEO-01', 'satclockerror (m)')
 
 
 @pytest.fixture(scope="module")
 def sample_preprocessed_meo():
     df = generate_synthetic_gnss_data(seed=42)
-    return preprocess_satellite(df, 'MEO-01', 'ClockError_ns')
+    return preprocess_satellite(df, 'MEO-01', 'satclockerror (m)')
 
 
 def test_output_keys(sample_preprocessed):
@@ -63,7 +63,7 @@ def test_length_after_differencing(sample_preprocessed):
 
 def test_iod_correction_reduces_jumps(sample_preprocessed):
     df = generate_synthetic_gnss_data(seed=42)
-    sat_df = df[df['SatelliteID'] == 'GEO-01']['ClockError_ns']
+    sat_df = df[df['SatelliteID'] == 'GEO-01']['satclockerror (m)']
     original_max_jump = sat_df.diff().abs().max()
     cleaned = sample_preprocessed['original_cleaned']
     cleaned_max_jump = pd.Series(cleaned).diff().abs().max()
@@ -73,8 +73,8 @@ def test_iod_correction_reduces_jumps(sample_preprocessed):
 
 def test_eph_error_also_processes():
     df = generate_synthetic_gnss_data(seed=42)
-    result = preprocess_satellite(df, 'GEO-01', 'EphemerisError_m')
-    assert result['error_col'] == 'EphemerisError_m'
+    result = preprocess_satellite(df, 'GEO-01', 'x_error (m)')
+    assert result['error_col'] == 'x_error (m)'
     assert not np.any(np.isnan(result['trend']))
 
 

@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from orbitalmind.utils.synthetic_generator import generate_synthetic_gnss_data
 
-EXPECTED_COLS = ['Timestamp', 'SatelliteID', 'OrbitType', 'ClockError_ns', 'EphemerisError_m']
+EXPECTED_COLS = ['Timestamp', 'SatelliteID', 'OrbitType', 'satclockerror (m)', 'x_error (m)', 'y_error (m)', 'z_error (m)']
 EXPECTED_ROWS = 6144      # 8 satellites × 768 points
 EXPECTED_GEO  = 3
 EXPECTED_MEO  = 5
@@ -57,10 +57,12 @@ def test_no_nan_values(synthetic_df):
 
 
 def test_clock_error_range(synthetic_df):
-    min_val = synthetic_df['ClockError_ns'].min()
-    max_val = synthetic_df['ClockError_ns'].max()
+    # satclockerror is now stored in metres; 20 ns ≈ 6 m, so ±20 m is a generous
+    # but physically motivated bound for broadcast clock errors in metres.
+    min_val = synthetic_df['satclockerror (m)'].min()
+    max_val = synthetic_df['satclockerror (m)'].max()
     assert min_val >= -20 and max_val <= 20, \
-        f"ClockError_ns out of realistic range [-20, 20]. Got [{min_val:.2f}, {max_val:.2f}]"
+        f"satclockerror (m) out of realistic range [-20, 20]. Got [{min_val:.2f}, {max_val:.2f}]"
 
 
 def test_ephemeris_error_range(synthetic_df):
@@ -80,26 +82,29 @@ def test_ephemeris_error_range(synthetic_df):
     fault. The saturation check below is the stronger assertion, and is what
     would actually have caught the original defect.
     """
-    values = synthetic_df['EphemerisError_m']
-    min_val, max_val = values.min(), values.max()
-
-    assert -50 < min_val and max_val < 50, \
-        f"EphemerisError_m implausible for any GNSS orbit: [{min_val:.2f}, {max_val:.2f}]"
+    # x_error (m) is the primary ephemeris component; check all three axes.
+    for col in ['x_error (m)', 'y_error (m)', 'z_error (m)']:
+        values = synthetic_df[col]
+        min_val, max_val = values.min(), values.max()
+        assert -50 < min_val and max_val < 50, \
+            f"{col} implausible for any GNSS orbit: [{min_val:.2f}, {max_val:.2f}]"
 
     # MEO orbits are better determined than geosynchronous ones.
-    meo = synthetic_df[synthetic_df['OrbitType'] == 'MEO']['EphemerisError_m']
+    meo = synthetic_df[synthetic_df['OrbitType'] == 'MEO']['x_error (m)']
     assert meo.abs().max() < 15, \
-        f"MEO ephemeris error {meo.abs().max():.2f} m is too large to be realistic"
+        f"MEO x_error {meo.abs().max():.2f} m is too large to be realistic"
 
     # The real guard: no value may pile up on a boundary. Saturated values carry
     # no information, and a model trained on them learns a ceiling that does not
     # exist in the real signal.
-    for bound in (min_val, max_val):
-        pinned = int((values == bound).sum())
-        assert pinned < 10, (
-            f"{pinned} rows sit at exactly {bound:.3f} m — the distribution is "
-            f"saturating, which is the clipping defect returning"
-        )
+    for col in ['x_error (m)', 'y_error (m)', 'z_error (m)']:
+        vals = synthetic_df[col]
+        for bound in (vals.min(), vals.max()):
+            pinned = int((vals == bound).sum())
+            assert pinned < 10, (
+                f"{pinned} rows in {col} sit at exactly {bound:.3f} m — the "
+                f"distribution is saturating, which is the clipping defect returning"
+            )
 
 
 def test_csv_file_exists():

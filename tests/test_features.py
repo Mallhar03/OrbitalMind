@@ -20,7 +20,7 @@ EXPECTED_N_FEATURES = 29
 @pytest.fixture(scope="module")
 def feature_data_geo():
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
+    preprocessed = preprocess_satellite(df, 'GEO-01', 'satclockerror (m)')
     sat_df = df[df['SatelliteID'] == 'GEO-01'].sort_values('Timestamp')
     timestamps = pd.to_datetime(sat_df['Timestamp'])
     X, y, names = build_feature_matrix(preprocessed, timestamps)
@@ -30,7 +30,7 @@ def feature_data_geo():
 @pytest.fixture(scope="module")
 def feature_data_meo():
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'MEO-01', 'ClockError_ns')
+    preprocessed = preprocess_satellite(df, 'MEO-01', 'satclockerror (m)')
     sat_df = df[df['SatelliteID'] == 'MEO-01'].sort_values('Timestamp')
     timestamps = pd.to_datetime(sat_df['Timestamp'])
     X, y, names = build_feature_matrix(preprocessed, timestamps)

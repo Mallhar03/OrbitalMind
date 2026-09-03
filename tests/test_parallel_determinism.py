@@ -41,7 +41,7 @@ def real_df():
 
 
 @pytest.mark.parametrize("sat", ["G01", "J07", "C06", "G19"])
-@pytest.mark.parametrize("col", ["ClockError_ns", "EphemerisError_m"])
+@pytest.mark.parametrize("col", ["satclockerror (m)", "x_error (m)"])
 def test_filtered_frame_matches_full_frame(real_df, sat, col):
     """
     The parallel worker's pre-filtered frame must preprocess identically.

@@ -172,7 +172,9 @@ def train_tft(
         final_val_loss = float(np.mean((tail_target[:n] - tail_preds[:n]) ** 2))
 
     os.makedirs(SAVE_DIR, exist_ok=True)
-    torch.save(model.state_dict(), f"{SAVE_DIR}/tft_{model_tag or orbit_type}_{error_col}.ckpt")
+    # Sanitize error_col for use in a filename: 'satclockerror (m)' -> 'satclockerror_m'
+    col_tag = error_col.replace(" ", "_").replace("(", "").replace(")", "")
+    torch.save(model.state_dict(), f"{SAVE_DIR}/tft_{model_tag or orbit_type}_{col_tag}.ckpt")
     TFT_FALLBACK_FLAG = False
 
     return model, {

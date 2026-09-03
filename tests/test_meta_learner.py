@@ -25,19 +25,19 @@ from orbitalmind.models.base_trainer import compute_rmse_horizons
 def all_model_outputs():
     """Get predictions from all 4 base models on validation data."""
     df = generate_synthetic_gnss_data(seed=42)
-    preprocessed = preprocess_satellite(df, 'GEO-01', 'ClockError_ns')
+    preprocessed = preprocess_satellite(df, 'GEO-01', 'satclockerror (m)')
     data = preprocessed['trend'] + preprocessed['periodic']
 
     train_data = data[:480]
     val_data = data[480:576]
     last_train_seq = train_data[-96:]
 
-    lstm_model, _ = train_lstm(train_data, 'GEO', 'ClockError_ns')
-    tcn_model, _ = train_tcn_lstm(train_data, 'GEO', 'ClockError_ns')
-    node_model, _ = train_neural_ode(train_data, 'GEO', 'ClockError_ns')
+    lstm_model, _ = train_lstm(train_data, 'GEO', 'satclockerror (m)')
+    tcn_model, _ = train_tcn_lstm(train_data, 'GEO', 'satclockerror (m)')
+    node_model, _ = train_neural_ode(train_data, 'GEO', 'satclockerror (m)')
 
     tft_df = prepare_tft_dataframe(preprocessed).iloc[:480].reset_index(drop=True)
-    tft_model, _ = train_tft(tft_df, 'GEO', 'ClockError_ns')
+    tft_model, _ = train_tft(tft_df, 'GEO', 'satclockerror (m)')
 
     outputs = {
         'lstm':       predict_lstm(lstm_model, last_train_seq, n_steps=96),
@@ -113,7 +113,7 @@ def test_feature_importance_all_models_contribute(trained_meta):
 
 
 def test_meta_model_saved():
-    assert os.path.exists("models/saved/meta_learner_GEO_ClockError_ns.txt"), \
+    assert os.path.exists("models/saved/meta_learner_GEO_satclockerror_m.txt"), \
         "Meta-learner model not saved"
 
 

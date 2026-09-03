@@ -148,10 +148,10 @@ def test_no_nan_produced(skewed_calibration):
 
 def test_model_saved_per_orbit_and_error_column():
     """
-    The old code wrote every satellite to normalizing_flow_GEO_ClockError_ns.pt
+    The old code wrote every satellite to normalizing_flow_GEO_satclockerror_m.pt
     regardless of orbit type or error column, so 63 of 64 fits were lost.
     """
     train_normalizing_flow(RNG.normal(0, 1, 96),
-                           orbit_type="MEO", error_col="EphemerisError_m")
-    assert os.path.exists("models/saved/normalizing_flow_MEO_EphemerisError_m.pt"), \
+                           orbit_type="MEO", error_col="x_error (m)")
+    assert os.path.exists("models/saved/normalizing_flow_MEO_x_error_m.pt"), \
         "flow not saved under its own orbit/error identity"
