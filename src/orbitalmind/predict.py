@@ -236,7 +236,23 @@ def run(
 
     frames, per_series, pooled = [], [], {p: [] for p in PARAMETERS}
     for train in train_series:
-        result, model = forecast_series(train, t_query)
+        # Route the query per series. If the query file names a satellite_id per
+        # row, each series forecasts only ITS rows (so a single mixed file cannot
+        # cross-match GEO timestamps to an MEO series). With no satellite_id
+        # column, every timestamp applies to every series (the separate-file case
+        # Note.pdf 1d describes).
+        if sat_ids:
+            idx = [i for i, sid in enumerate(sat_ids) if sid == train.satellite_id]
+            if not idx:
+                continue  # nothing in this file for this series
+            s_query = [t_query[i] for i in idx]
+            s_truth = (
+                {p: truth[p][idx] for p in PARAMETERS} if truth is not None else None
+            )
+        else:
+            s_query, s_truth = t_query, truth
+
+        result, model = forecast_series(train, s_query)
         df = result.predictions.copy()
         df.insert(1, "satellite_id", train.satellite_id)
         df.insert(2, "orbit", train.orbit)
@@ -262,9 +278,9 @@ def run(
                 },
             },
         }
-        # Score only if the query file carried matching truth (same length).
-        if truth is not None and len(t_query) == len(next(iter(truth.values()))):
-            actual = np.column_stack([truth[p] for p in PARAMETERS])
+        # Score only if the query carried matching truth (same length).
+        if s_truth is not None and len(s_query) == len(next(iter(s_truth.values()))):
+            actual = np.column_stack([s_truth[p] for p in PARAMETERS])
             preds = result.predictions[list(TARGET_COLUMNS)].to_numpy(float)
             resid = {
                 PARAMETERS[j]: preds[:, j] - actual[:, j]
@@ -282,8 +298,17 @@ def run(
                 save_qq_plot(allr, os.path.join(qq_dir, f"qq_{train.satellite_id}.png"))
         per_series.append(entry)
 
+    if not frames:
+        raise ValueError(
+            "No training series matched the query's satellite_id values. The "
+            "query names satellites "
+            f"{sorted(set(sat_ids))[:5]}... but the training files provide "
+            f"{[s.satellite_id for s in train_series]}. Use a query without a "
+            "satellite_id column (all timestamps apply to every series), or one "
+            "whose ids match the training series."
+        )
     submission = pd.concat(frames, ignore_index=True)
-    report = {"alpha": ALPHA, "n_series": len(train_series), "series": per_series}
+    report = {"alpha": ALPHA, "n_series": len(per_series), "series": per_series}
     if any(len(v) for v in pooled.values()):
         report["overall"] = score_residuals(pooled).as_dict()
         report["gaussian_pass_count"] = sum(
