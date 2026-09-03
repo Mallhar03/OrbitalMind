@@ -1,0 +1,56 @@
+# OrbitalMind — pinned to the versions this project is actually verified on.
+#
+# Requires Python 3.10-3.12. Check with: python3 --version
+#
+# Install with:
+#   python3 -m venv venv
+#   source venv/bin/activate
+#   pip install -r requirements.txt
+#
+# NOTE ON TORCH: this file previously pinned torch==2.1.0 / torchvision==0.16.0.
+# torch 2.1.0 publishes no cp312 wheel, so `pip install -r requirements.txt`
+# failed outright on Python 3.12 even though the project's own venv had been
+# built with 2.2.0. The pins below match what the pipeline is tested against.
+
+# Core data
+numpy==1.26.4
+pandas==2.2.1
+scipy==1.13.0
+
+# Deep learning (2.2.0 is the first release with Python 3.12 wheels)
+torch==2.2.0
+torchvision==0.17.0
+
+# Sequence models
+pytorch-forecasting==1.1.1
+pytorch-lightning==2.1.0
+
+# Neural ODE
+torchdiffeq==0.2.3
+
+# Normalizing Flow
+normflows==1.7.2
+
+# Signal decomposition
+EMD-signal==1.6.3
+
+# Meta learner
+lightgbm==4.3.0
+
+# Visualisation
+matplotlib==3.8.4
+seaborn==0.13.2
+
+# Testing
+pytest==8.1.1
+# Parallel test execution. The suite trains real models, so a serial run takes
+# well over an hour on 16 cores; `pytest -n auto` cuts that to minutes.
+pytest-xdist==3.8.0
+
+# Code formatting
+black==24.3.0
+
+# RINEX / data download
+georinex==1.16.2
+hatanaka==2.8.1
+requests==2.34.2

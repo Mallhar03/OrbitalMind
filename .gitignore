@@ -1,0 +1,49 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+data/raw/
+models/saved/
+outputs/
+*.pt
+*.ckpt
+# Keep outputs structure but ignore content
+outputs/*.csv
+outputs/*.png
+outputs/*.txt
+!outputs/.gitkeep
+
+# Claude Flow per-session state (machine-local, not project source)
+.claude-flow/
+
+# Local-only 10-day working plan — never push this
+plan/
+
+# Result directories from comparison runs — regenerable, and large
+outputs_*/
+
+# Session working aids: run supervisors, watchdogs, progress indicators and
+# resume helpers. Useful while driving a long run, not part of the project.
+scripts/_*.sh
+scripts/progress.py
+scripts/statusline.sh
+scripts/finalise.sh
+scripts/resume_work.sh
+scripts/compare_options.py
+CHECKPOINT.md
+
+# Backups
+*.bak-*
+
+# Assistant working directories — instructions, audit records, checker prompts,
+# skill notes and iteration memory. Local helpers, not project code. The
+# engineering rationale they contained lives in docs/DECISIONS.md.
+.claude/
+memory/
+skills/
+
+# Session bookkeeping helpers — drive the local checkpoint/memory files above.
+scripts/connector.py
+scripts/resume.py
+scripts/write_checkpoint.py
