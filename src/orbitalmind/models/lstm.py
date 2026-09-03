@@ -10,6 +10,7 @@ from orbitalmind.paths import models_dir
 from orbitalmind.device import resolve_device
 
 SEQ_LEN    = 96
+PRED_LEN   = 96
 HIDDEN     = 64
 N_LAYERS   = 2
 DROPOUT    = 0.2
@@ -19,36 +20,36 @@ LR         = 0.001
 SAVE_DIR   = models_dir()
 
 
-def _make_sequences(data: np.ndarray, seq_len: int):
-    """Sliding-window sequence builder for next-step prediction."""
+def _make_sequences(data: np.ndarray, seq_len: int, pred_len: int):
+    """Sliding-window sequence builder for direct multi-step prediction."""
     X, y = [], []
-    for i in range(len(data) - seq_len):
+    for i in range(len(data) - seq_len - pred_len + 1):
         X.append(data[i:i + seq_len])
-        y.append(data[i + seq_len])
+        y.append(data[i + seq_len:i + seq_len + pred_len])
     return np.array(X, dtype=np.float32), np.array(y, dtype=np.float32)
 
 
 class LSTMPredictor(nn.Module):
     """Two-layer LSTM for univariate time series."""
 
-    def __init__(self, input_size=1, hidden_size=HIDDEN, num_layers=N_LAYERS, dropout=DROPOUT):
+    def __init__(self, input_size=1, hidden_size=HIDDEN, num_layers=N_LAYERS, dropout=DROPOUT, pred_len=PRED_LEN):
         super().__init__()
         self.lstm = nn.LSTM(
             input_size, hidden_size, num_layers,
             batch_first=True,
             dropout=dropout if num_layers > 1 else 0.0,
         )
-        self.fc = nn.Linear(hidden_size, 1)
+        self.fc = nn.Linear(hidden_size, pred_len)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
             x: (batch, seq_len, 1)
         Returns:
-            (batch,) predictions
+            (batch, pred_len) predictions
         """
         out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :]).squeeze(-1)
+        return self.fc(out[:, -1, :])
 
 
 def train_lstm(
@@ -77,7 +78,7 @@ def train_lstm(
     dev = resolve_device(device)
 
     train_data = np.asarray(data_array, dtype=np.float32)
-    X_np, y_np = _make_sequences(train_data, SEQ_LEN)
+    X_np, y_np = _make_sequences(train_data, SEQ_LEN, PRED_LEN)
     X_t = torch.tensor(X_np).unsqueeze(-1)  # (n, seq, 1)
     y_t = torch.tensor(y_np)
 
@@ -117,26 +118,25 @@ def predict_lstm(
     device: str | None = None,
 ) -> np.ndarray:
     """
-    Generate n_steps ahead predictions via autoregressive rollout.
+    Generate direct multi-step predictions.
 
     Args:
         model: trained LSTMPredictor
         last_sequence: 1-D array of the most recent SEQ_LEN values
-        n_steps: number of future steps to predict
+        n_steps: number of future steps to predict (must be <= PRED_LEN)
         device: torch device string, or None to resolve automatically
     Returns:
         np.ndarray of shape (n_steps,) in original signal units.
     """
     dev = resolve_device(device)
     model.eval()
-    seq = list(np.asarray(last_sequence, dtype=np.float32)[-SEQ_LEN:])
-    preds = []
+    seq = np.asarray(last_sequence, dtype=np.float32).flatten()
+    if len(seq) < SEQ_LEN:
+        raise ValueError(f"predict_lstm needs {SEQ_LEN} input steps, got {len(seq)}")
+    seq = seq[-SEQ_LEN:]
 
     with torch.no_grad():
-        for _ in range(n_steps):
-            x = torch.tensor(seq[-SEQ_LEN:], dtype=torch.float32).unsqueeze(0).unsqueeze(-1).to(dev)
-            val = model(x).item()
-            preds.append(val)
-            seq.append(val)
+        x = torch.tensor(seq, dtype=torch.float32).unsqueeze(0).unsqueeze(-1).to(dev)
+        preds = model(x).squeeze(0).cpu().numpy()
 
-    return np.array(preds, dtype=np.float32)
+    return preds[:n_steps]
