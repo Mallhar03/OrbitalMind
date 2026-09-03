@@ -12,7 +12,7 @@ WORKERS = 8
 # same oversubscription that makes 15 pipeline workers slower than 8.
 THREADS = OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 
-.PHONY: setup fetch run run-fast explain ablation test test-fast \
+.PHONY: setup synthetic fetch run run-fast explain ablation test test-fast \
         format format-check clean clean-outputs help
 
 # ── SETUP ────────────────────────────────────────────────
@@ -21,13 +21,19 @@ setup:
 	python3 -m venv venv
 	. venv/bin/activate && pip install -r requirements.txt
 	mkdir -p models/saved outputs data/synthetic data/raw
-	@echo "Setup complete. Run: source venv/bin/activate"
+	@echo "Setup complete. Run: source venv/bin/activate, then: make synthetic"
 
 # ── DATA ─────────────────────────────────────────────────
+# Nothing under data/ is committed (see data/README.md) — both targets below
+# write locally, on demand.
+
+# Small generated dataset for the install smoke test and the unit tests.
+synthetic:
+	$(PYTHON) scripts/generate_synthetic_data.py
+
 # Pulls real GNSS products from NASA CDDIS. Needs Earthdata credentials in
 # ~/.netrc under urs.earthdata.nasa.gov. Writes 7 days of input plus a
 # separate holdout file for the 8th day, which training never reads.
-
 fetch:
 	$(PYTHON) scripts/fetch_data.py --days 8
 
@@ -86,6 +92,7 @@ help:
 	@echo "OrbitalMind"
 	@echo ""
 	@echo "  make setup       create venv and install dependencies"
+	@echo "  make synthetic   generate the local synthetic dataset (smoke test, unit tests)"
 	@echo "  make fetch       download 8 days of real GNSS data from NASA CDDIS"
 	@echo "  make run         full pipeline with backtest (~3-4.5 h, 95 satellites)"
 	@echo "  make run-fast    submission only, no backtest (~half the time)"

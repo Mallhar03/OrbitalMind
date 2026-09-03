@@ -90,6 +90,10 @@ python3 -m venv venv
 source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
+# nothing under data/ is committed (see data/README.md) — generate the
+# smoke-test dataset locally first
+python scripts/generate_synthetic_data.py       # writes data/synthetic/gnss_synthetic.csv
+
 # smoke test — 2 satellites, ~5 min, confirms the install works
 python src/orbitalmind/run_pipeline.py \
     --data data/synthetic/gnss_synthetic.csv --max-satellites 2
@@ -100,14 +104,16 @@ pytest tests/ --ignore=tests/test_pipeline.py -q     # ~3 min, 161 tests
 `tests/test_pipeline.py` runs the whole pipeline and takes ~40 minutes. Run it
 on its own when you actually want end-to-end verification.
 
-`make help` lists the common tasks — fetching data, running the pipeline with or
-without the backtest, tracing one satellite through preprocessing, and the two
-test targets.
+`make help` lists the common tasks — generating or fetching data, running the
+pipeline with or without the backtest, tracing one satellite through
+preprocessing, and the two test targets. `make setup` creates the venv;
+`make synthetic` is the target form of the generation command above.
 
 ### Getting the real data
 
-`data/raw/` is gitignored, so a fresh clone has only the synthetic file. To
-download real IGS orbit and clock data from NASA CDDIS:
+Nothing under `data/` is committed — see [`data/README.md`](data/README.md)
+for the full contract. To download real IGS orbit and clock data from NASA
+CDDIS:
 
 ```bash
 python scripts/fetch_data.py        # writes data/raw/gnss_real.csv

@@ -3,7 +3,8 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
-data/raw/
+data/*
+!data/README.md
 models/saved/
 outputs/
 *.pt
